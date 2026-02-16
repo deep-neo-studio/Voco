@@ -11,8 +11,15 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@capacitor-community/file-opener": "^8.0.0",
     "@capacitor/android": "^8.1.0",
     "@capacitor/cli": "^8.1.0",
-    "@capacitor/core": "^8.1.0"
+    "@capacitor/core": "^8.1.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/network": "^8.0.1",
+    "epubjs": "^0.3.93",
+    "file-saver": "^2.0.5",
+    "jszip": "^3.10.1",
+    "pdfjs-dist": "^5.4.624"
   }
 }

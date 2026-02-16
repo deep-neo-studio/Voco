@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎧 Conversor de Audiolibros</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="static/css/style.css">
+</head>
+
+<body>
+    <div class="bg-gradient"></div>
+    <button class="settings-btn" id="btnSettings" aria-label="Configuración">⚙️</button>
+
+    <!-- Splash: Language Selection -->
+    <div class="splash-overlay" id="splashOverlay">
+        <div class="splash-content">
+            <div class="splash-icon">🌍</div>
+            <h2>Selecciona tu idioma</h2>
+            <p>Choose your language</p>
+            <div class="lang-options">
+                <div class="lang-option" data-ui-lang="es">
+                    <span class="flag">🇪🇸</span>
+                    <span class="lang-name">Español</span>
+                </div>
+                <div class="lang-option" data-ui-lang="pt">
+                    <span class="flag">🇧🇷</span>
+                    <span class="lang-name">Português</span>
+                </div>
+                <div class="lang-option" data-ui-lang="fr">
+                    <span class="flag">🇫🇷</span>
+                    <span class="lang-name">Français</span>
+                </div>
+                <div class="lang-option" data-ui-lang="en">
+                    <span class="flag">🇬🇧</span>
+                    <span class="lang-name">English</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div class="logo">🎧</div>
+            <h1 data-i18n="title">Conversor de Audiolibros</h1>
+            <p class="subtitle" data-i18n="subtitle">TXT • PDF • EPUB → MP3</p>
+        </header>
+
+        <!-- Steps indicator -->
+        <div class="steps">
+            <div class="step active" id="step1"><span class="step-num">1</span> <span
+                    data-i18n="step_upload">Subir</span></div>
+            <div class="step" id="step2"><span class="step-num">2</span> <span
+                    data-i18n="step_select">Seleccionar</span></div>
+            <div class="step" id="step3"><span class="step-num">3</span> <span data-i18n="step_convert">Convertir</span>
+            </div>
+        </div>
+
+        <main>
+            <!-- Step 1: Upload -->
+            <div class="section active" id="uploadSection">
+                <div class="drop-zone" id="dropZone">
+                    <span class="drop-icon">📚</span>
+                    <p class="drop-text" data-i18n="drop_text">Arrastra tu libro aquí</p>
+                    <p class="drop-hint" data-i18n="drop_hint">o haz clic para seleccionar • TXT, PDF, EPUB</p>
+                    <input type="file" class="file-input" id="fileInput" accept=".txt,.pdf,.epub">
+                </div>
+            </div>
+
+            <!-- Step 2: Select Chapters -->
+            <div class="section" id="selectSection">
+                <div class="file-info-bar">
+                    <span class="icon">📄</span>
+                    <span class="name" id="fileName"></span>
+                    <button class="btn-change" id="btnChangeFile" data-i18n="btn_change">Cambiar</button>
+                </div>
+
+                <!-- Voice Selection -->
+                <div class="voice-section">
+                    <h3 class="section-title" data-i18n="voice_title">🗣️ Voz del narrador</h3>
+                    <div class="lang-selector">
+                        <label data-i18n="voice_lang">🌐 Idioma</label>
+                        <div class="lang-select-row">
+                            <select id="langSelect">
+                                <option value="">Cargando idiomas...</option>
+                            </select>
+                            <select id="localeSelect" style="display:none;">
+                                <option value="">Región</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="voice-grid" id="voiceGrid">
+                        <div class="voice-loading">
+                            <div class="spinner"></div>
+                            <div>Cargando voces...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Divider -->
+                <div class="divider-section">
+                    <h3 class="section-title" data-i18n="divider_title">✂️ Separador de capítulos</h3>
+                    <div class="divider-row">
+                        <input type="text" id="customDivider" placeholder="Ej: Chapter, ***, ---, Parte">
+                        <button class="btn-reanalyze" id="btnReanalyze">🔄 Re-analizar</button>
+                    </div>
+                    <div class="divider-presets">
+                        <button class="btn-preset" data-sep="Chapter">Chapter</button>
+                        <button class="btn-preset" data-sep="Parte">Parte</button>
+                        <button class="btn-preset" data-sep="Sección">Sección</button>
+                        <button class="btn-preset" data-sep="***">***</button>
+                        <button class="btn-preset" data-sep="---">---</button>
+                        <button class="btn-preset" data-sep="====">====</button>
+                        <button class="btn-preset" data-sep="#">## Título</button>
+                    </div>
+                    <div class="divider-hint" id="dividerHint">Predeterminado: Capítulo, Chapter, Parte, Sección +
+                        número</div>
+                </div>
+
+                <!-- Chapter Selection -->
+                <div class="chapter-section">
+                    <div class="chapter-header">
+                        <h3 class="section-title" data-i18n="chapters_title">📖 Capítulos a convertir</h3>
+                        <div class="chapter-actions">
+                            <button class="btn-select" id="btnSelectAll" data-i18n="btn_all">✓ Todos</button>
+                            <button class="btn-select" id="btnSelectNone" data-i18n="btn_none">✗ Ninguno</button>
+                            <span class="selected-count" id="selectedCount">0 seleccionados</span>
+                        </div>
+                    </div>
+                    <div class="chapter-list" id="chapterList"></div>
+                </div>
+
+                <button class="btn-primary" id="btnConvert" disabled data-i18n="btn_convert">🎙️ Convertir
+                    seleccionados</button>
+            </div>
+
+            <!-- Step 3: Progress & Results -->
+            <div class="section" id="progressSection">
+                <div class="progress-section">
+                    <div class="progress-header">
+                        <span class="progress-status" id="progressStatus">Iniciando...</span>
+                        <span class="progress-percent" id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-chapter" id="progressChapter"></div>
+                </div>
+            </div>
+
+            <div class="section" id="resultsSection">
+                <div class="results-header">
+                    <span class="icon">✅</span>
+                    <h3 data-i18n="results_done">¡Conversión completada!</h3>
+                </div>
+                <h4 id="results-header-text" style="margin-bottom:10px;"></h4>
+                <div class="results-list" id="resultsList"></div>
+                <button class="btn-back" id="btnNewConversion" data-i18n="btn_new">📚 Convertir otro libro</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content">
+            <h3 class="section-title" data-i18n="settings_title">⚙️ Configuración / Settings</h3>
+
+            <div class="settings-group">
+                <label data-i18n="settings_lang">🌐 Idioma / Language</label>
+                <div class="lang-options mini"
+                    style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px;">
+                    <div class="lang-option" data-set-lang="es" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇪🇸</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="pt" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇧🇷</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="fr" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇫🇷</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="en" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇬🇧</span>
+                    </div>
+                </div>
+                <!-- Remove API URL setting for standalone -->
+                <div style="margin-top:20px; color: var(--text-secondary); font-size:0.8rem;">
+                    Mode: Standalone (Offline processing + Cloud Voices)
+                </div>
+            </div>
+
+            <div class="settings-actions" style="margin-top: 25px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="https://ko-fi.com/NE0NOE" target="_blank" class="btn-back"
+                    style="flex: 1; margin: 0; text-align: center; text-decoration: none; border-color: #FF5E5B; color: #FF5E5B;">☕
+                    Ko-fi</a>
+                <button class="btn-back" id="btnCloseSettings" style="flex: 1; margin: 0;"
+                    data-i18n="btn_cancel">Cancelar</button>
+                <!-- Save handled automatically for lang, remove Save button or keep for modal close -->
+                <button class="btn-primary" id="btnSaveSettings"
+                    style="flex: 1; margin: 0; margin-top: 0; padding: 12px;" data-i18n="btn_save">Aceptar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="static/js/jszip.min.js"></script>
+    <script type="module" src="static/js/script.js"></script>
+</body>
+
+</html>

@@ -587,4 +587,4 @@ def probar_voz(voz_key):
 if __name__ == '__main__':
     print("\n🎧 Conversor de Audiolibros")
     print("   Abre http://localhost:5000 en tu navegador\n")
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5000, host='0.0.0.0')
