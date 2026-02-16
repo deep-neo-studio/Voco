@@ -1,0 +1,1701 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎧 Conversor de Audiolibros</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0f0f1a;
+            --bg-secondary: #1a1a2e;
+            --bg-card: #16213e;
+            --accent: #e94560;
+            --accent-glow: rgba(233, 69, 96, 0.3);
+            --accent-secondary: #ff6b6b;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0b0;
+            --success: #4ade80;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .bg-gradient {
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse at 20% 20%, rgba(233, 69, 96, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 80%, rgba(99, 102, 241, 0.15) 0%, transparent 50%);
+            z-index: -1;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .logo {
+            font-size: 3.5rem;
+            margin-bottom: 10px;
+            animation: float 3s ease-in-out infinite;
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-8px);
+            }
+        }
+
+        h1 {
+            font-size: 2.2rem;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .subtitle {
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        /* Steps indicator */
+        .steps {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 30px;
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            background: var(--bg-card);
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            transition: all 0.3s;
+        }
+
+        .step.active {
+            background: var(--accent);
+            color: white;
+        }
+
+        .step.done {
+            background: var(--success);
+            color: white;
+        }
+
+        .step-num {
+            font-weight: 600;
+        }
+
+        /* Drop Zone */
+        .drop-zone {
+            background: var(--bg-card);
+            border: 2px dashed var(--border);
+            border-radius: 20px;
+            padding: 50px 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .drop-zone:hover,
+        .drop-zone.drag-over {
+            border-color: var(--accent);
+            box-shadow: 0 0 30px var(--accent-glow);
+        }
+
+        .drop-icon {
+            font-size: 3.5rem;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .drop-text {
+            font-size: 1.2rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .drop-hint {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* Sections */
+        .section {
+            display: none;
+        }
+
+        .section.active {
+            display: block;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+        }
+
+        /* Voice Selection */
+        .voice-section {
+            margin-top: 25px;
+        }
+
+        .section-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+
+        .lang-selector {
+            margin-bottom: 18px;
+        }
+
+        .lang-selector label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .lang-select-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .lang-select-row select {
+            flex: 1;
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-primary);
+            padding: 10px 14px;
+            font-size: 0.95rem;
+            font-family: inherit;
+            appearance: none;
+            cursor: pointer;
+            transition: border-color 0.2s;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+        }
+
+        .lang-select-row select:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .voice-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            max-height: 320px;
+            overflow-y: auto;
+            padding-right: 4px;
+        }
+
+        .voice-grid::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .voice-grid::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .voice-grid::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        .voice-loading {
+            text-align: center;
+            padding: 30px;
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .voice-loading .spinner {
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-bottom: 8px;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .voice-card {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            padding: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .voice-card:hover {
+            border-color: var(--accent);
+        }
+
+        .voice-card.selected {
+            border-color: var(--accent);
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .voice-card input {
+            display: none;
+        }
+
+        .voice-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .voice-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .voice-meta {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .voice-gender {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            margin-top: 6px;
+        }
+
+        .voice-gender.m {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+        }
+
+        .voice-gender.f {
+            background: rgba(236, 72, 153, 0.2);
+            color: #f472b6;
+        }
+
+        .btn-preview {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .btn-preview:hover {
+            background: var(--accent);
+        }
+
+        .btn-preview.playing {
+            background: var(--success);
+        }
+
+        /* Chapter Selection */
+        .chapter-section {
+            margin-top: 25px;
+        }
+
+        .chapter-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .chapter-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-select {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.2s;
+        }
+
+        .btn-select:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .chapter-list {
+            background: var(--bg-card);
+            border-radius: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .chapter-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.2s;
+        }
+
+        .chapter-item:last-child {
+            border-bottom: none;
+        }
+
+        .chapter-item:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .chapter-item input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        .chapter-info {
+            flex: 1;
+        }
+
+        .chapter-title {
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .chapter-chars {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .selected-count {
+            background: var(--accent);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+
+        /* Buttons */
+        .btn-primary {
+            width: 100%;
+            padding: 16px;
+            margin-top: 25px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), var(--accent-secondary));
+            border: none;
+            border-radius: 12px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px var(--accent-glow);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-back {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 12px 20px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: all 0.2s;
+        }
+
+        .btn-back:hover {
+            border-color: var(--text-primary);
+            color: var(--text-primary);
+        }
+
+        /* Progress */
+        .progress-section {
+            margin-top: 25px;
+            background: var(--bg-card);
+            border-radius: 15px;
+            padding: 20px;
+        }
+
+        .progress-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 12px;
+        }
+
+        .progress-status {
+            font-weight: 500;
+        }
+
+        .progress-bar-container {
+            background: var(--bg-secondary);
+            border-radius: 10px;
+            height: 10px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+            border-radius: 10px;
+            transition: width 0.3s;
+        }
+
+        .progress-chapter {
+            margin-top: 10px;
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+        }
+
+        /* Results */
+        .results-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .results-header .icon {
+            font-size: 1.8rem;
+            color: var(--success);
+        }
+
+        .results-list {
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .result-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .result-item:last-child {
+            border-bottom: none;
+        }
+
+        .result-icon {
+            font-size: 1.3rem;
+            margin-right: 12px;
+        }
+
+        .result-info {
+            flex: 1;
+        }
+
+        .result-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        .result-size {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .btn-download {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-download:hover {
+            background: var(--accent-secondary);
+        }
+
+        /* File info */
+        .file-info-bar {
+            background: var(--bg-card);
+            border-radius: 10px;
+            padding: 12px 15px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .file-info-bar .icon {
+            font-size: 1.8rem;
+        }
+
+        .file-info-bar .name {
+            font-weight: 500;
+            flex: 1;
+        }
+
+        .file-info-bar .btn-change {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        /* Custom Divider */
+        .divider-section {
+            margin-top: 20px;
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 15px;
+        }
+
+        .divider-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .divider-row input {
+            flex: 1;
+            background: var(--bg-secondary);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            padding: 8px 12px;
+            font-size: 0.9rem;
+            font-family: inherit;
+        }
+
+        .divider-row input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .divider-row input::placeholder {
+            color: var(--text-secondary);
+            opacity: 0.6;
+        }
+
+        .btn-reanalyze {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+
+        .btn-reanalyze:hover {
+            background: var(--accent-secondary);
+        }
+
+        .btn-reanalyze:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .divider-presets {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 10px;
+        }
+
+        .btn-preset {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 4px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .btn-preset:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .divider-hint {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            opacity: 0.7;
+        }
+
+        /* Settings Button */
+        .settings-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: var(--text-secondary);
+            font-size: 1.5rem;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .settings-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+            color: var(--text-primary);
+        }
+
+        /* Settings Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal-content {
+            background: var(--bg-card);
+            padding: 30px;
+            border-radius: 16px;
+            width: 90%;
+            max-width: 500px;
+            transform: translateY(20px);
+            transition: all 0.3s;
+            border: 1px solid var(--border);
+        }
+
+        .modal-overlay.active .modal-content {
+            transform: translateY(0);
+        }
+
+        /* Splash / Language Selection */
+        .splash-overlay {
+            position: fixed;
+            inset: 0;
+            background: var(--bg-primary);
+            z-index: 9999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s, visibility 0.5s;
+        }
+
+        .splash-overlay.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        .splash-content {
+            text-align: center;
+            max-width: 400px;
+            padding: 20px;
+        }
+
+        .splash-content .splash-icon {
+            font-size: 4rem;
+            margin-bottom: 16px;
+        }
+
+        .splash-content h2 {
+            font-size: 1.5rem;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .splash-content p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            margin-bottom: 30px;
+        }
+
+        .lang-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .lang-option {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 12px;
+            cursor: pointer;
+            transition: all 0.25s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .lang-option:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(233, 69, 96, 0.15);
+        }
+
+        .lang-option .flag {
+            font-size: 2rem;
+        }
+
+        .lang-option .lang-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .lang-option .lang-native {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* i18n subtitles */
+        .i18n-sub {
+            display: block;
+            font-size: 0.65em;
+            color: var(--accent-secondary);
+            font-weight: 400;
+            opacity: 0.85;
+            margin-top: 2px;
+            letter-spacing: 0.01em;
+            -webkit-text-fill-color: initial;
+            /* Fix for gradient text parents */
+        }
+
+        @media (max-width: 600px) {
+            .voice-grid {
+                grid-template-columns: 1fr;
+            }
+
+            h1 {
+                font-size: 1.7rem;
+            }
+
+            .steps {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bg-gradient"></div>
+    <button class="settings-btn" id="btnSettings" aria-label="Configuración">⚙️</button>
+
+    <!-- Splash: Language Selection -->
+    <div class="splash-overlay" id="splashOverlay">
+        <div class="splash-content">
+            <div class="splash-icon">🌍</div>
+            <h2>Selecciona tu idioma</h2>
+            <p>Choose your language</p>
+            <div class="lang-options">
+                <div class="lang-option" data-ui-lang="es">
+                    <span class="flag">🇪🇸</span>
+                    <span class="lang-name">Español</span>
+                </div>
+                <div class="lang-option" data-ui-lang="pt">
+                    <span class="flag">🇧🇷</span>
+                    <span class="lang-name">Português</span>
+                </div>
+                <div class="lang-option" data-ui-lang="fr">
+                    <span class="flag">🇫🇷</span>
+                    <span class="lang-name">Français</span>
+                </div>
+                <div class="lang-option" data-ui-lang="en">
+                    <span class="flag">🇬🇧</span>
+                    <span class="lang-name">English</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <header>
+            <div class="logo">🎧</div>
+            <h1 data-i18n="title">Conversor de Audiolibros</h1>
+            <p class="subtitle" data-i18n="subtitle">TXT • PDF • EPUB → MP3</p>
+        </header>
+
+        <!-- Steps indicator -->
+        <div class="steps">
+            <div class="step active" id="step1"><span class="step-num">1</span> <span
+                    data-i18n="step_upload">Subir</span></div>
+            <div class="step" id="step2"><span class="step-num">2</span> <span
+                    data-i18n="step_select">Seleccionar</span></div>
+            <div class="step" id="step3"><span class="step-num">3</span> <span data-i18n="step_convert">Convertir</span>
+            </div>
+        </div>
+
+        <main>
+            <!-- Step 1: Upload -->
+            <div class="section active" id="uploadSection">
+                <div class="drop-zone" id="dropZone">
+                    <span class="drop-icon">📚</span>
+                    <p class="drop-text" data-i18n="drop_text">Arrastra tu libro aquí</p>
+                    <p class="drop-hint" data-i18n="drop_hint">o haz clic para seleccionar • TXT, PDF, EPUB</p>
+                    <input type="file" class="file-input" id="fileInput" accept=".txt,.pdf,.epub">
+                </div>
+            </div>
+
+            <!-- Step 2: Select Chapters -->
+            <div class="section" id="selectSection">
+                <div class="file-info-bar">
+                    <span class="icon">📄</span>
+                    <span class="name" id="fileName"></span>
+                    <button class="btn-change" id="btnChangeFile" data-i18n="btn_change">Cambiar</button>
+                </div>
+
+                <!-- Voice Selection -->
+                <div class="voice-section">
+                    <h3 class="section-title" data-i18n="voice_title">🗣️ Voz del narrador</h3>
+                    <div class="lang-selector">
+                        <label data-i18n="voice_lang">🌐 Idioma</label>
+                        <div class="lang-select-row">
+                            <select id="langSelect">
+                                <option value="">Cargando idiomas...</option>
+                            </select>
+                            <select id="localeSelect">
+                                <option value="">Región</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="voice-grid" id="voiceGrid">
+                        <div class="voice-loading">
+                            <div class="spinner"></div>
+                            <div>Cargando voces...</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Custom Divider -->
+                <div class="divider-section">
+                    <h3 class="section-title" data-i18n="divider_title">✂️ Separador de capítulos</h3>
+                    <div class="divider-row">
+                        <input type="text" id="customDivider" placeholder="Ej: Chapter, ***, ---, Parte">
+                        <button class="btn-reanalyze" id="btnReanalyze">🔄 Re-analizar</button>
+                    </div>
+                    <div class="divider-presets">
+                        <button class="btn-preset" data-sep="Chapter">Chapter</button>
+                        <button class="btn-preset" data-sep="Parte">Parte</button>
+                        <button class="btn-preset" data-sep="Sección">Sección</button>
+                        <button class="btn-preset" data-sep="***">***</button>
+                        <button class="btn-preset" data-sep="---">---</button>
+                        <button class="btn-preset" data-sep="====">====</button>
+                        <button class="btn-preset" data-sep="#">## Título</button>
+                    </div>
+                    <div class="divider-hint" id="dividerHint">Predeterminado: Capítulo, Chapter, Parte, Sección +
+                        número</div>
+                </div>
+
+                <!-- Chapter Selection -->
+                <div class="chapter-section">
+                    <div class="chapter-header">
+                        <h3 class="section-title" data-i18n="chapters_title">📖 Capítulos a convertir</h3>
+                        <div class="chapter-actions">
+                            <button class="btn-select" id="btnSelectAll" data-i18n="btn_all">✓ Todos</button>
+                            <button class="btn-select" id="btnSelectNone" data-i18n="btn_none">✗ Ninguno</button>
+                            <span class="selected-count" id="selectedCount">0 seleccionados</span>
+                        </div>
+                    </div>
+                    <div class="chapter-list" id="chapterList"></div>
+                </div>
+
+                <button class="btn-primary" id="btnConvert" disabled data-i18n="btn_convert">🎙️ Convertir
+                    seleccionados</button>
+            </div>
+
+            <!-- Step 3: Progress & Results -->
+            <div class="section" id="progressSection">
+                <div class="progress-section">
+                    <div class="progress-header">
+                        <span class="progress-status" id="progressStatus">Iniciando...</span>
+                        <span class="progress-percent" id="progressPercent">0%</span>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-chapter" id="progressChapter"></div>
+                </div>
+            </div>
+
+            <div class="section" id="resultsSection">
+                <div class="results-header">
+                    <span class="icon">✅</span>
+                    <h3 data-i18n="results_done">¡Conversión completada!</h3>
+                </div>
+                <div class="results-list" id="resultsList"></div>
+                <button class="btn-back" id="btnNewConversion" data-i18n="btn_new">📚 Convertir otro libro</button>
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-content">
+            <h3 class="section-title" data-i18n="settings_title">⚙️ Configuración / Settings</h3>
+
+            <div class="settings-group">
+                <label data-i18n="settings_lang">🌐 Idioma / Language</label>
+                <div class="lang-options mini"
+                    style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px;">
+                    <div class="lang-option" data-set-lang="es" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇪🇸</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="pt" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇧🇷</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="fr" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇫🇷</span>
+                    </div>
+                    <div class="lang-option" data-set-lang="en" style="padding: 10px;">
+                        <span class="flag" style="font-size: 1.5rem;">🇬🇧</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-group" style="margin-top: 20px;">
+                <label data-i18n="settings_api">🖥️ Servidor API / API Server</label>
+                <input type="text" id="apiUrlInput" placeholder="http://192.168.x.x:5000"
+                    style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-secondary); color: white; margin-top: 5px;">
+                <div class="divider-hint" data-i18n="settings_api_hint">Dejar vacío para usar servidor local / Leave
+                    empty for local server</div>
+            </div>
+
+            <div class="settings-actions" style="margin-top: 25px; display: flex; gap: 10px; flex-wrap: wrap;">
+                <a href="https://ko-fi.com/NE0NOE" target="_blank" class="btn-back"
+                    style="flex: 1; margin: 0; text-align: center; text-decoration: none; border-color: #FF5E5B; color: #FF5E5B;">☕
+                    Ko-fi</a>
+                <button class="btn-back" id="btnCloseSettings" style="flex: 1; margin: 0;"
+                    data-i18n="btn_cancel">Cancelar</button>
+                <button class="btn-primary" id="btnSaveSettings"
+                    style="flex: 1; margin: 0; margin-top: 0; padding: 12px;" data-i18n="btn_save">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentFileId = null;
+        let chapters = [];
+        let currentAudio = null;
+        let allLanguages = [];
+        let currentVoices = [];
+        let selectedVoiceId = null;
+
+        // Elements
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const langSelect = document.getElementById('langSelect');
+        const localeSelect = document.getElementById('localeSelect');
+        const voiceGrid = document.getElementById('voiceGrid');
+        const sections = {
+            upload: document.getElementById('uploadSection'),
+            select: document.getElementById('selectSection'),
+            progress: document.getElementById('progressSection'),
+            results: document.getElementById('resultsSection')
+        };
+
+        // Show section
+        function showSection(name) {
+            Object.values(sections).forEach(s => s.classList.remove('active'));
+            sections[name].classList.add('active');
+
+            const steps = ['step1', 'step2', 'step3'];
+            const currentIdx = { upload: 0, select: 1, progress: 2, results: 2 }[name];
+            steps.forEach((s, i) => {
+                const el = document.getElementById(s);
+                el.classList.remove('active', 'done');
+                if (i < currentIdx) el.classList.add('done');
+                else if (i === currentIdx) el.classList.add('active');
+            });
+        }
+
+        // --- Language & Voice Management ---
+        async function loadLanguages() {
+            try {
+                const res = await fetch(getUrl('/idiomas'));
+                allLanguages = await res.json();
+
+                const savedLang = localStorage.getItem('audiolib_lang') || 'es';
+
+                langSelect.innerHTML = allLanguages.map(lang =>
+                    `<option value="${lang.codigo}" ${lang.codigo === savedLang ? 'selected' : ''}>${lang.nombre}</option>`
+                ).join('');
+
+                updateLocales(savedLang);
+            } catch (err) {
+                langSelect.innerHTML = '<option value="es">Español</option>';
+                loadLegacyVoices();
+            }
+        }
+
+        function updateLocales(langCode) {
+            const lang = allLanguages.find(l => l.codigo === langCode);
+            if (!lang) return;
+
+            const savedLocale = localStorage.getItem('audiolib_locale') || '';
+
+            if (lang.locales.length === 1) {
+                localeSelect.innerHTML = `<option value="${lang.locales[0].codigo}">${lang.locales[0].nombre}</option>`;
+                localeSelect.style.display = 'none';
+                loadVoicesForLocale(lang.locales[0].codigo);
+            } else {
+                localeSelect.style.display = '';
+                localeSelect.innerHTML = `<option value="${langCode}">Todas las regiones</option>` +
+                    lang.locales.map(l =>
+                        `<option value="${l.codigo}" ${l.codigo === savedLocale ? 'selected' : ''}>${l.nombre} (${l.voces_count})</option>`
+                    ).join('');
+
+                const activeLocale = savedLocale && lang.locales.some(l => l.codigo === savedLocale)
+                    ? savedLocale : langCode;
+                loadVoicesForLocale(activeLocale);
+            }
+        }
+
+        async function loadVoicesForLocale(locale) {
+            voiceGrid.innerHTML = '<div class="voice-loading"><div class="spinner"></div><div>Cargando voces...</div></div>';
+
+            try {
+                const res = await fetch(getUrl(`/voces/${locale}`));
+                currentVoices = await res.json();
+
+                if (currentVoices.error) {
+                    voiceGrid.innerHTML = `<div class="voice-loading">No se encontraron voces</div>`;
+                    return;
+                }
+
+                const savedVoice = localStorage.getItem('audiolib_voice') || '';
+                renderVoiceCards(savedVoice);
+            } catch (err) {
+                voiceGrid.innerHTML = `<div class="voice-loading">Error al cargar voces</div>`;
+            }
+        }
+
+        function renderVoiceCards(preselectedId) {
+            voiceGrid.innerHTML = currentVoices.map(v => `
+                <label class="voice-card ${v.id === preselectedId ? 'selected' : ''}" data-voice-id="${v.id}">
+                    <input type="radio" name="voz" value="${v.id}" ${v.id === preselectedId ? 'checked' : ''}>
+                    <div class="voice-header">
+                        <div>
+                            <div class="voice-name">${v.nombre}</div>
+                            <div class="voice-meta">${v.region}</div>
+                        </div>
+                        <button class="btn-preview" data-voice="${v.id}" title="Escuchar">▶</button>
+                    </div>
+                    <span class="voice-gender ${v.genero === 'Masculino' ? 'm' : 'f'}">${v.genero}</span>
+                </label>
+            `).join('');
+
+            // Si no hay preseleccionada, seleccionar la primera
+            if (!preselectedId || !currentVoices.find(v => v.id === preselectedId)) {
+                const first = voiceGrid.querySelector('.voice-card');
+                if (first) {
+                    first.classList.add('selected');
+                    first.querySelector('input').checked = true;
+                    selectedVoiceId = currentVoices[0]?.id;
+                }
+            } else {
+                selectedVoiceId = preselectedId;
+            }
+
+            // Voice card click
+            voiceGrid.querySelectorAll('.voice-card').forEach(card => {
+                card.addEventListener('click', (e) => {
+                    if (e.target.classList.contains('btn-preview')) return;
+                    voiceGrid.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
+                    card.classList.add('selected');
+                    selectedVoiceId = card.dataset.voiceId;
+                    localStorage.setItem('audiolib_voice', selectedVoiceId);
+                });
+            });
+
+            // Preview buttons
+            voiceGrid.querySelectorAll('.btn-preview').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    const vozId = btn.dataset.voice;
+                    if (currentAudio) {
+                        currentAudio.pause();
+                        voiceGrid.querySelectorAll('.btn-preview').forEach(b => {
+                            b.classList.remove('playing');
+                            b.textContent = '▶';
+                        });
+                    }
+
+                    btn.textContent = '⏳';
+                    const audio = new Audio(getUrl(`/probar-voz/${vozId}`));
+                    audio.oncanplaythrough = () => {
+                        btn.classList.add('playing');
+                        btn.textContent = '⏸';
+                        audio.play();
+                    };
+                    audio.onended = () => {
+                        btn.classList.remove('playing');
+                        btn.textContent = '▶';
+                    };
+                    audio.onerror = () => {
+                        btn.textContent = '▶';
+                    };
+                    currentAudio = audio;
+                });
+            });
+        }
+
+        function loadLegacyVoices() {
+            // Fallback con las voces legacy
+            currentVoices = [
+                { id: 'es-ES-AlvaroNeural', nombre: 'Álvaro', region: 'España', genero: 'Masculino' },
+                { id: 'es-US-AlonsoNeural', nombre: 'Alonso', region: 'EE.UU.', genero: 'Masculino' },
+                { id: 'es-MX-JorgeNeural', nombre: 'Jorge', region: 'México', genero: 'Masculino' },
+                { id: 'es-MX-DaliaNeural', nombre: 'Dalia', region: 'México', genero: 'Femenino' },
+            ];
+            renderVoiceCards('es-MX-JorgeNeural');
+        }
+
+        // Language change events
+        langSelect.addEventListener('change', () => {
+            const lang = langSelect.value;
+            localStorage.setItem('audiolib_lang', lang);
+            localStorage.removeItem('audiolib_locale');
+            localStorage.removeItem('audiolib_voice');
+            updateLocales(lang);
+        });
+
+        localeSelect.addEventListener('change', () => {
+            const locale = localeSelect.value;
+            localStorage.setItem('audiolib_locale', locale);
+            localStorage.removeItem('audiolib_voice');
+            loadVoicesForLocale(locale);
+        });
+
+        // Drop zone
+        dropZone.addEventListener('click', () => fileInput.click());
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files[0]) handleFile(e.target.files[0]);
+        });
+
+        async function handleFile(file) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (!['txt', 'pdf', 'epub'].includes(ext)) {
+                alert('Solo archivos TXT, PDF o EPUB');
+                return;
+            }
+
+            dropZone.innerHTML = '<span class="drop-icon">⏳</span><p class="drop-text">Analizando...</p>';
+
+            const formData = new FormData();
+            formData.append('archivo', file);
+
+            try {
+                const res = await fetch(getUrl('/analizar'), { method: 'POST', body: formData });
+                const data = await res.json();
+
+                if (data.error) {
+                    alert(data.error);
+                    resetDropZone();
+                    return;
+                }
+
+                currentFileId = data.file_id;
+                chapters = data.capitulos;
+                document.getElementById('fileName').textContent = data.nombre;
+                renderChapters();
+                showSection('select');
+
+            } catch (err) {
+                alert('Error al procesar archivo');
+                resetDropZone();
+            }
+        }
+
+        function resetDropZone() {
+            dropZone.innerHTML = `
+                <span class="drop-icon">📚</span>
+                <p class="drop-text">Arrastra tu libro aquí</p>
+                <p class="drop-hint">o haz clic para seleccionar • TXT, PDF, EPUB</p>
+            `;
+        }
+
+        function renderChapters() {
+            const list = document.getElementById('chapterList');
+            list.innerHTML = chapters.map(c => `
+                <div class="chapter-item">
+                    <input type="checkbox" id="cap${c.id}" value="${c.id}" checked>
+                    <div class="chapter-info">
+                        <div class="chapter-title">${c.titulo}</div>
+                        <div class="chapter-chars">${(c.chars / 1000).toFixed(1)}k caracteres</div>
+                    </div>
+                </div>
+            `).join('');
+
+            list.querySelectorAll('input').forEach(cb => {
+                cb.addEventListener('change', updateSelectedCount);
+            });
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            const checked = document.querySelectorAll('#chapterList input:checked').length;
+            document.getElementById('selectedCount').textContent = `${checked} seleccionados`;
+            document.getElementById('btnConvert').disabled = checked === 0;
+        }
+
+        // Custom Divider
+        document.getElementById('btnReanalyze').addEventListener('click', async () => {
+            const separador = document.getElementById('customDivider').value;
+            const btn = document.getElementById('btnReanalyze');
+            const hint = document.getElementById('dividerHint');
+
+            btn.disabled = true;
+            btn.textContent = '⏳ Analizando...';
+
+            try {
+                const res = await fetch(getUrl('/re-analizar'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_id: currentFileId,
+                        separador: separador
+                    })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    hint.textContent = '❌ ' + data.error;
+                    hint.style.color = '#ff6b6b';
+                    return;
+                }
+
+                chapters = data.capitulos;
+                renderChapters();
+                hint.textContent = separador
+                    ? `✅ Dividido con "${separador}" → ${data.total} partes`
+                    : `✅ División automática → ${data.total} capítulos`;
+                hint.style.color = '#51cf66';
+            } catch (err) {
+                hint.textContent = '❌ Error de conexión';
+                hint.style.color = '#ff6b6b';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔄 Re-analizar';
+            }
+        });
+
+        // Preset buttons
+        document.querySelectorAll('.btn-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.getElementById('customDivider').value = btn.dataset.sep;
+                document.getElementById('btnReanalyze').click();
+            });
+        });
+
+        document.getElementById('btnSelectAll').addEventListener('click', () => {
+            document.querySelectorAll('#chapterList input').forEach(cb => cb.checked = true);
+            updateSelectedCount();
+        });
+
+        document.getElementById('btnSelectNone').addEventListener('click', () => {
+            document.querySelectorAll('#chapterList input').forEach(cb => cb.checked = false);
+            updateSelectedCount();
+        });
+
+        document.getElementById('btnChangeFile').addEventListener('click', () => {
+            resetDropZone();
+            showSection('upload');
+            fileInput.value = '';
+        });
+
+        document.getElementById('btnConvert').addEventListener('click', async () => {
+            const selectedIds = Array.from(document.querySelectorAll('#chapterList input:checked'))
+                .map(cb => parseInt(cb.value));
+
+            // Obtener la voz seleccionada (ShortName directo)
+            const vozChecked = document.querySelector('input[name="voz"]:checked');
+            const vozId = vozChecked ? vozChecked.value : selectedVoiceId;
+
+            showSection('progress');
+
+            try {
+                const res = await fetch(getUrl('/convertir'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        file_id: currentFileId,
+                        voz_id: vozId,
+                        capitulos: selectedIds
+                    })
+                });
+                const data = await res.json();
+
+                if (data.error) {
+                    alert(data.error);
+                    showSection('select');
+                    return;
+                }
+
+                pollProgress(data.job_id);
+            } catch (err) {
+                alert('Error de conexión');
+                showSection('select');
+            }
+        });
+
+        async function pollProgress(jobId) {
+            const interval = setInterval(async () => {
+                try {
+                    const res = await fetch(getUrl(`/estado/${jobId}`));
+                    const data = await res.json();
+
+                    let statusText = '🎙️ Convirtiendo...';
+                    if (data.estado === 'pausando') {
+                        statusText = `⏸️ Pausa preventiva (${data.pausa_restante}s)`;
+                    } else if (data.estado === 'convirtiendo') {
+                        statusText = '🎙️ Convirtiendo...';
+                    }
+                    document.getElementById('progressStatus').textContent = statusText;
+
+                    if (data.total > 0) {
+                        const pct = Math.round((data.actual / data.total) * 100);
+                        document.getElementById('progressPercent').textContent = pct + '%';
+                        document.getElementById('progressBar').style.width = pct + '%';
+                        document.getElementById('progressChapter').textContent =
+                            `${data.actual}/${data.total}: ${data.capitulo}`;
+                    }
+
+                    if (data.completados && data.completados.length > 0) {
+                        data.completados.forEach(capId => {
+                            const cb = document.getElementById(`cap${capId}`);
+                            if (cb && cb.checked) {
+                                cb.checked = false;
+                                cb.parentElement.style.opacity = '0.5';
+                            }
+                        });
+                        updateSelectedCount();
+                    }
+
+                    if (data.estado === 'completado') {
+                        clearInterval(interval);
+                        showResults(jobId);
+                    } else if (data.estado === 'error') {
+                        clearInterval(interval);
+                        alert('Error: ' + data.error + '\n\nLos capítulos ya convertidos fueron desmarcados. Puedes reintentar solo los pendientes.');
+                        showSection('select');
+                    }
+                } catch (err) {
+                    clearInterval(interval);
+                    alert('Error de conexión. Los capítulos completados fueron desmarcados.');
+                    showSection('select');
+                }
+            }, 1000);
+        }
+
+        async function showResults(jobId) {
+            try {
+                const res = await fetch(getUrl(`/descargas/${jobId}`));
+                const data = await res.json();
+
+                document.getElementById('resultsList').innerHTML = data.archivos.map(f => `
+                    <div class="result-item">
+                        <span class="result-icon">🎵</span>
+                        <div class="result-info">
+                            <div class="result-name">${f.nombre}</div>
+                        <div class="result-size">${(f.size / 1024 / 1024).toFixed(1)} MB</div>
+                    </div>
+                    <a class="btn-download" href="/descargar/${jobId}/${f.nombre}">⬇ Descargar</a>
+                </div >
+            `).join('');
+
+                showSection('results');
+            } catch (err) {
+                console.error(err);
+                alert('Error al obtener resultados');
+            }
+        }
+
+        document.getElementById('btnNewConversion').addEventListener('click', () => {
+            resetDropZone();
+            showSection('upload');
+            fileInput.value = '';
+        });
+
+        // --- i18n Translations ---
+        const UI_TRANSLATIONS = {
+            pt: {
+                title: 'Conversor de Audiolivros',
+                subtitle: 'TXT • PDF • EPUB → MP3',
+                step_upload: 'Enviar',
+                step_select: 'Selecionar',
+                step_convert: 'Converter',
+                drop_text: 'Arraste seu livro aqui',
+                drop_hint: 'ou clique para selecionar • TXT, PDF, EPUB',
+                btn_change: 'Alterar',
+                voice_title: '🗣️ Voz do narrador',
+                voice_lang: '🌐 Idioma',
+                divider_title: '✂️ Separador de capítulos',
+                chapters_title: '📖 Capítulos para converter',
+                btn_all: '✓ Todos',
+                btn_none: '✗ Nenhum',
+                btn_convert: '🎙️ Converter selecionados',
+                results_done: 'Conversão concluída!',
+                btn_new: '📚 Converter outro livro',
+                settings_title: '⚙️ Configuração',
+                settings_lang: '🌐 Idioma',
+                settings_api: '🖥️ Servidor API',
+                settings_api_hint: 'Deixe vazio para usar servidor local',
+                btn_cancel: 'Cancelar',
+                btn_save: 'Salvar',
+            },
+            fr: {
+                title: 'Convertisseur de livres audio',
+                subtitle: 'TXT • PDF • EPUB → MP3',
+                step_upload: 'Envoyer',
+                step_select: 'Sélectionner',
+                step_convert: 'Convertir',
+                drop_text: 'Glissez votre livre ici',
+                drop_hint: 'ou cliquez pour sélectionner • TXT, PDF, EPUB',
+                btn_change: 'Changer',
+                voice_title: '🗣️ Voix du narrateur',
+                voice_lang: '🌐 Langue',
+                divider_title: '✂️ Séparateur de chapitres',
+                chapters_title: '📖 Chapitres à convertir',
+                btn_all: '✓ Tous',
+                btn_none: '✗ Aucun',
+                btn_convert: '🎙️ Convertir la sélection',
+                results_done: 'Conversion terminée !',
+                btn_new: '📚 Convertir un autre livre',
+                settings_title: '⚙️ Configuration',
+                settings_lang: '🌐 Langue',
+                settings_api: '🖥️ Serveur API',
+                settings_api_hint: 'Laisser vide pour le serveur local',
+                btn_cancel: 'Annuler',
+                btn_save: 'Enregistrer',
+            },
+            en: {
+                title: 'Audiobook Converter',
+                subtitle: 'TXT • PDF • EPUB → MP3',
+                step_upload: 'Upload',
+                step_select: 'Select',
+                step_convert: 'Convert',
+                drop_text: 'Drag your book here',
+                drop_hint: 'or click to select • TXT, PDF, EPUB',
+                btn_change: 'Change',
+                voice_title: '🗣️ Narrator voice',
+                voice_lang: '🌐 Language',
+                divider_title: '✂️ Chapter separator',
+                chapters_title: '📖 Chapters to convert',
+                btn_all: '✓ All',
+                btn_none: '✗ None',
+                btn_convert: '🎙️ Convert selected',
+                results_done: 'Conversion complete!',
+                btn_new: '📚 Convert another book',
+                settings_title: '⚙️ Settings',
+                settings_lang: '🌐 Language',
+                settings_api: '🖥️ API Server',
+                settings_api_hint: 'Leave empty for local server',
+                btn_cancel: 'Cancel',
+                btn_save: 'Save',
+            }
+        };
+
+        let uiLang = localStorage.getItem('audiolib_ui_lang') || null;
+        let apiBaseUrl = localStorage.getItem('audiolib_api_url') || '';
+
+        function getUrl(path) {
+            return apiBaseUrl ? apiBaseUrl + path : path;
+        }
+
+        function applyI18n(lang) {
+            // Remove any existing subtitles
+            document.querySelectorAll('.i18n-sub').forEach(el => el.remove());
+
+            if (!lang || lang === 'es') return; // No subtitles for Spanish
+
+            const t = UI_TRANSLATIONS[lang];
+            if (!t) return;
+
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.dataset.i18n;
+                if (t[key]) {
+                    // Remove previous subtitle if any
+                    const existing = el.querySelector('.i18n-sub');
+                    if (existing) existing.remove();
+
+                    const sub = document.createElement('span');
+                    sub.className = 'i18n-sub';
+                    sub.textContent = t[key];
+                    el.appendChild(sub);
+                }
+            });
+        }
+
+        // Splash screen
+        const splash = document.getElementById('splashOverlay');
+
+        function initSplash() {
+            if (uiLang) {
+                // Already chose language before
+                splash.classList.add('hidden');
+                applyI18n(uiLang);
+            }
+            // Otherwise splash stays visible
+        }
+
+        document.querySelectorAll('.lang-option').forEach(opt => {
+            opt.addEventListener('click', () => {
+                uiLang = opt.dataset.uiLang;
+                localStorage.setItem('audiolib_ui_lang', uiLang);
+                splash.classList.add('hidden');
+                applyI18n(uiLang);
+            });
+        });
+
+        initSplash();
+
+        // Settings Logic
+        const settingsModal = document.getElementById('settingsModal');
+        const btnSettings = document.getElementById('btnSettings');
+        const btnCloseSettings = document.getElementById('btnCloseSettings');
+        const btnSaveSettings = document.getElementById('btnSaveSettings');
+        const apiUrlInput = document.getElementById('apiUrlInput');
+        const settingsLangOptions = document.querySelectorAll('.lang-options.mini .lang-option');
+
+        btnSettings.addEventListener('click', () => {
+            apiUrlInput.value = apiBaseUrl;
+            // Highlight current lang
+            settingsLangOptions.forEach(opt => {
+                opt.style.borderColor = (opt.dataset.setLang === (uiLang || 'es')) ? 'var(--accent)' : 'var(--border)';
+            });
+            settingsModal.classList.add('active');
+        });
+
+        btnCloseSettings.addEventListener('click', () => {
+            settingsModal.classList.remove('active');
+        });
+
+        settingsLangOptions.forEach(opt => {
+            opt.addEventListener('click', () => {
+                settingsLangOptions.forEach(o => o.style.borderColor = 'var(--border)');
+                opt.style.borderColor = 'var(--accent)';
+                // Preview selection (not saved yet, or maybe save immediately?)
+                // Saving immediately to variable but not persisting until Save
+                // Actually simpler to just let user select and Save commits it
+                opt.dataset.selected = 'true';
+            });
+        });
+
+        btnSaveSettings.addEventListener('click', () => {
+            // Save API URL
+            const url = apiUrlInput.value.trim().replace(/\/$/, ''); // Remove trailing slash
+            localStorage.setItem('audiolib_api_url', url);
+
+            // Save Lang
+            const selectedLangOpt = Array.from(settingsLangOptions).find(o => o.style.borderColor.includes('accent'));
+            if (selectedLangOpt) {
+                const newLang = selectedLangOpt.dataset.setLang;
+                localStorage.setItem('audiolib_ui_lang', newLang);
+            }
+
+            location.reload(); // Reload to apply all changes cleanly
+        });
+
+        // Init: load languages
+        loadLanguages();
+    </script>
+
+
+</body>
+
+</html>
