@@ -1,75 +1,95 @@
-# 🎧 Conversor de Libros a Audiolibros
+# 🎧 Voco - Conversor de Livros a Audiolibros
 
-Convierte archivos de texto (.txt, .pdf) en audiolibros MP3 utilizando las voces neuronales de Microsoft Edge.
+[Download APK](https://github.com/deep-neo-studio/Voco/releases) | [Español](#español) | [Português](#português) | [Français](#français) | [English](#english)
 
-## Instalación Rápida
+---
 
-El proyecto ya incluye un entorno virtual con las dependencias instaladas. Solo necesitas:
+## Español
 
-```bash
-# Opcional: Para convertir archivos EPUB
-sudo apt install pandoc -y
-```
+Convierte archivos de texto (.txt, .pdf, .epub) en audiolibros MP3 de alta calidad utilizando voces neuronales.
 
-## Uso Básico
+### Ejecución Local
+1. **Interfaz Web**:
+   ```bash
+   python app.py
+   ```
+   Abre `http://localhost:5000` en tu navegador.
+2. **Terminal**:
+   ```bash
+   ./convertir.sh libro.pdf
+   ```
 
-Usa el script `convertir.sh` que gestiona automáticamente el entorno virtual:
+### Requisitos
+- Python 3.8+
+- `ffmpeg` instalado en el sistema.
+- `pip install -r requirements.txt`
 
-```bash
-# Convertir un PDF
-./convertir.sh libro.pdf
+---
 
-# Convertir un TXT
-./convertir.sh libro.txt
+## Português
 
-# Cambiar la voz
-./convertir.sh libro.pdf --voz alonso
+Converta arquivos de texto (.txt, .pdf, .epub) em audiolivros MP3 de alta qualidade usando vozes neurais.
 
-# Especificar carpeta de salida
-./convertir.sh libro.pdf --salida ./mi_audiolibro
+### Execução Local
+1. **Interface Web**:
+   ```bash
+   python app.py
+   ```
+   Abra `http://localhost:5000` no seu navegador.
+2. **Terminal**:
+   ```bash
+   ./convertir.sh livro.pdf
+   ```
 
-# Ver voces disponibles
-./convertir.sh --voces
-```
+### Requisitos
+- Python 3.8+
+- `ffmpeg` instalado no sistema.
+- `pip install -r requirements.txt`
 
-## Voces Disponibles
+---
 
-| Nombre  | Identificador          | Región   | Género    |
-|---------|------------------------|----------|-----------|
-| alvaro  | es-ES-AlvaroNeural     | España   | Masculino |
-| alonso  | es-US-AlonsoNeural     | EE.UU.   | Masculino |
-| jorge   | es-MX-JorgeNeural      | México   | Masculino |
-| dalia   | es-MX-DaliaNeural      | México   | Femenino  |
+## Français
 
-**Voz por defecto:** `jorge` (México - Masculina)
+Convertissez des fichiers texte (.txt, .pdf, .epub) en livres audio MP3 de haute qualité à l'aide de voix neuronales.
 
-## División por Capítulos
+### Exécution Locale
+1. **Interface Web**:
+   ```bash
+   python app.py
+   ```
+   Ouvrez `http://localhost:5000` dans votre navigateur.
+2. **Terminal**:
+   ```bash
+   ./convertir.sh livre.pdf
+   ```
 
-El script detecta automáticamente capítulos con el formato:
-- `CAPÍTULO 1`
-- `Capítulo 1`
-- `CAPITULO X`
+### Configuration Requise
+- Python 3.8+
+- `ffmpeg` installé sur le système.
+- `pip install -r requirements.txt`
 
-Cada capítulo se guarda como un archivo MP3 separado:
-```
-libro_audiolibro/
-├── libro_capitulo_1.mp3
-├── libro_capitulo_2.mp3
-├── libro_capitulo_3.mp3
-└── ...
-```
+---
 
-## Convertir EPUB a TXT
+## English
 
-Si tienes un archivo EPUB, conviértelo primero:
+Convert text files (.txt, .pdf, .epub) into high-quality MP3 audiobooks using neural voices.
 
-```bash
-pandoc libro.epub -o libro.txt
-```
+### Local Execution
+1. **Web Interface**:
+   ```bash
+   python app.py
+   ```
+   Open `http://localhost:5000` in your browser.
+2. **Terminal**:
+   ```bash
+   ./convertir.sh book.pdf
+   ```
 
-## Notas
+### Requirements
+- Python 3.8+
+- `ffmpeg` installed on the system.
+- `pip install -r requirements.txt`
 
-- La API de Edge TTS es gratuita y no requiere autenticación
-- El proceso puede tomar varios minutos dependiendo del tamaño del libro
-- Los archivos MP3 resultantes son compatibles con cualquier reproductor
-# Voco
+---
+
+[☕ Support this project on Ko-fi](https://ko-fi.com/NE0NOE)
