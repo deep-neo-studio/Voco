@@ -1,6 +1,6 @@
 # 🎧 Voco - Conversor de Livros a Audiolibros
 
-[Download APK](https://github.com/deep-neo-studio/Voco/releases) | [Español](#español) | [Português](#português) | [Français](#français) | [English](#english)
+[Download APK](https://github.com/deep-neo-studio/Voco/releases/tag/v1.0.0) | [Español](#español) | [Português](#português) | [Français](#français) | [English](#english)
 
 ---
 
