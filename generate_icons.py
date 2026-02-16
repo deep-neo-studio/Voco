@@ -3,8 +3,8 @@ import os
 from PIL import Image
 
 # Paths
-source_image_path = "/home/n/Escritorio/Proyectos/audiolibros/icon.png"
-android_res_path = "/home/n/Escritorio/Proyectos/audiolibros/android/app/src/main/res"
+source_image_path = "/home/n/Escritorio/Proyectos/voco/icon.png"
+android_res_path = "/home/n/Escritorio/Proyectos/voco/android/app/src/main/res"
 
 # Icon configurations
 # (folder_name, size)
