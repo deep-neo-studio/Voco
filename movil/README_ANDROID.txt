@@ -8,7 +8,8 @@ Opción A: Usando Termux (Recomendado)
 3. Abre Termux y navega a la carpeta.
    (Ejemplo: `cd /sdcard/Download/voco`)
 4. Ejecuta el script de instalación:
-   bash instalar_termux.sh
+   chmod +x instalar_termux.sh  <-- IMPORTANTE
+   ./instalar_termux.sh
 5. Inicia el servidor:
    python app.py
 
