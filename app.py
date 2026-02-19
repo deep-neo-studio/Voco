@@ -320,6 +320,12 @@ def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida, nomb
         conversiones[job_id]['error'] = str(e)
 
 
+@app.route('/ping')
+def ping():
+    """Endpoint para verificar conexión desde el celular."""
+    return jsonify({"status": "ok", "message": "Voco Server Online", "version": "1.0.0"})
+
+
 @app.route('/')
 def index():
     return render_template('index.html', voces=VOCES)

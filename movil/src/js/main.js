@@ -1,545 +1,261 @@
 
-import '../css/style.css';
-import { FileParser } from './fileParser.js';
-import { ChapterSplitter } from './chapterSplitter.js';
-import { TextToSpeech } from '@capacitor-community/text-to-speech';
+import { API } from './api.js';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { EdgeTTS } from './edge-tts.js';
 
-// --- State ---
-let currentFile = null;
+// --- Global State ---
+let currentFileId = null;
 let currentChapters = [];
-let selectedChapters = new Set();
-let isConverting = false;
-let currentLang = 'es';
-let allVoices = []; // Native or Cloud voices depending on mode
-let edgeVoices = []; // Cache for cloud voices
-let filteredVoices = [];
-let useCloudTTS = false; // Toggle state
+let selectedVoiceId = localStorage.getItem('selected_voice_id') || 'es-MX-JorgeNeural';
 
-// --- Modules ---
-const fileParser = new FileParser();
-const splitter = new ChapterSplitter();
-const edgeTTS = new EdgeTTS();
+// --- UI Elements ---
+const screens = {
+    connection: document.getElementById('connection-screen'),
+    app: document.querySelector('.app-container')
+};
 
-// --- Elements ---
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const uploadSection = document.getElementById('uploadSection');
-const selectSection = document.getElementById('selectSection');
-const progressSection = document.getElementById('progressSection');
-const resultsSection = document.getElementById('resultsSection');
-const fileNameDisplay = document.getElementById('fileName');
-const chapterList = document.getElementById('chapterList');
-const btnConvert = document.getElementById('btnConvert');
-const voiceGrid = document.getElementById('voiceGrid');
-const splashOverlay = document.getElementById('splashOverlay');
-const langSelect = document.getElementById('langSelect');
-const localeSelect = document.getElementById('localeSelect');
+const inputs = {
+    serverUrl: document.getElementById('server-url'),
+    connectBtn: document.getElementById('btn-connect'),
+    connError: document.getElementById('connection-error')
+};
+
+const ui = {
+    fileInput: document.getElementById('file-upload'),
+    fileName: document.getElementById('file-name'),
+    changeFileBtn: document.getElementById('change-file-btn'),
+    languageSelect: document.getElementById('language-select'),
+    regionSelect: document.getElementById('region-select'),
+    voiceGrid: document.querySelector('.voice-grid'),
+    convertBtn: document.getElementById('convert-btn'),
+    statusText: document.getElementById('status-text'),
+    progressBar: document.querySelector('.progress-fill')
+};
 
 // --- Initialization ---
-
 document.addEventListener('DOMContentLoaded', () => {
-    initEventListeners();
-    loadVoices(); // Initial load (Native)
+    // 1. Check previous connection
+    const savedUrl = localStorage.getItem('voco_server_url');
+    if (savedUrl) inputs.serverUrl.value = savedUrl;
+
+    // 2. Setup Listeners
+    inputs.connectBtn.addEventListener('click', tryConnect);
+    ui.fileInput.addEventListener('change', handleFileUpload);
+    ui.changeFileBtn.addEventListener('click', () => ui.fileInput.click());
+    ui.languageSelect.addEventListener('change', loadVoices);
+    ui.convertBtn.addEventListener('click', startConversion);
 });
 
-function initEventListeners() {
-    // Voice Source Toggle
-    const btnNative = document.getElementById('btnSourceNative');
-    const btnCloud = document.getElementById('btnSourceCloud');
+async function tryConnect() {
+    const url = inputs.serverUrl.value.trim();
+    if (!url) return;
 
-    if (btnNative && btnCloud) {
-        btnNative.addEventListener('click', () => {
-            btnNative.classList.add('active');
-            btnCloud.classList.remove('active');
-            toggleVoiceSource(false);
-        });
-        btnCloud.addEventListener('click', () => {
-            btnCloud.classList.add('active');
-            btnNative.classList.remove('active');
-            toggleVoiceSource(true);
-        });
+    inputs.connectBtn.disabled = true;
+    inputs.connectBtn.textContent = "Conectando...";
+    inputs.connError.style.display = 'none';
+
+    API.setBaseUrl(url);
+    const isAlive = await API.ping();
+
+    if (isAlive) {
+        screens.connection.style.display = 'none';
+        await loadLanguages();
+    } else {
+        inputs.connError.textContent = "No se pudo conectar. Verifica que server.py esté corriendo.";
+        inputs.connError.style.display = 'block';
     }
-
-    // Splash Screen Language Selection
-    document.querySelectorAll('.splash-content .lang-option').forEach(option => {
-        option.addEventListener('click', () => {
-            const lang = option.dataset.uiLang;
-            setLanguage(lang);
-            splashOverlay.style.display = 'none';
-        });
-    });
-
-    // Settings Language Selection
-    document.querySelectorAll('.settings-group .lang-option').forEach(option => {
-        option.addEventListener('click', () => {
-            const lang = option.dataset.setLang;
-            setLanguage(lang);
-            document.querySelectorAll('.settings-group .lang-option').forEach(o => o.style.border = '1px solid #ddd');
-            option.style.border = '2px solid var(--primary-color)';
-        });
-    });
-
-    // File Upload
-    dropZone.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', handleFileSelect);
-
-    // Navigation
-    document.getElementById('btnChangeFile').addEventListener('click', () => {
-        switchSection(uploadSection);
-        currentFile = null;
-    });
-
-    document.getElementById('btnNewConversion').addEventListener('click', () => {
-        switchSection(uploadSection);
-        currentFile = null;
-        currentChapters = [];
-        chapterList.innerHTML = '';
-        fileInput.value = '';
-    });
-
-    // Chapter Selection
-    document.getElementById('btnSelectAll').addEventListener('click', () => {
-        document.querySelectorAll('.chapter-checkbox').forEach(cb => cb.checked = true);
-        updateSelection();
-    });
-    document.getElementById('btnSelectNone').addEventListener('click', () => {
-        document.querySelectorAll('.chapter-checkbox').forEach(cb => cb.checked = false);
-        updateSelection();
-    });
-
-    // Conversion
-    btnConvert.addEventListener('click', startConversion);
-
-    // Filters
-    langSelect.addEventListener('change', filterVoices);
-    localeSelect.addEventListener('change', filterVoices);
-
-    // Settings
-    document.getElementById('btnSettings').addEventListener('click', () => {
-        document.getElementById('settingsModal').classList.add('active');
-    });
-    document.getElementById('btnCloseSettings').addEventListener('click', () => {
-        document.getElementById('settingsModal').classList.remove('active');
-    });
-    document.getElementById('btnSaveSettings').addEventListener('click', () => {
-        document.getElementById('settingsModal').classList.remove('active');
-    });
+    inputs.connectBtn.disabled = false;
+    inputs.connectBtn.textContent = "Conectar";
 }
-
-// --- Voice Source Logic ---
-
-async function toggleVoiceSource(isCloud) {
-    if (useCloudTTS === isCloud && allVoices.length > 0) return; // Already set
-
-    useCloudTTS = isCloud;
-    console.log("Switched to", useCloudTTS ? "Cloud (Edge)" : "Native");
-
-    // Clear current grid
-    voiceGrid.innerHTML = '<div style="grid-column: 1/-1; text-align:center; padding: 20px;"><div class="spinner"></div><p>Loading...</p></div>';
-
-    try {
-        if (useCloudTTS) {
-            if (edgeVoices.length === 0) {
-                edgeVoices = await edgeTTS.getVoices();
-            }
-            allVoices = edgeVoices;
-        } else {
-            const result = await TextToSpeech.getSupportedVoices();
-            allVoices = result.voices;
-        }
-
-        populateFilters();
-        filterVoices();
-    } catch (e) {
-        console.error("Error loading source", e);
-        voiceGrid.innerHTML = '<p>Error loading voices</p>';
-    }
-}
-
 
 // --- Logic ---
 
-function setLanguage(lang) {
-    if (!translations[lang]) return;
-    currentLang = lang;
-
-    const elements = document.querySelectorAll('[data-i18n]');
-    elements.forEach(el => {
-        const key = el.dataset.i18n;
-        if (translations[lang][key]) {
-            el.textContent = translations[lang][key];
-        }
-    });
-
-    const dividerInput = document.getElementById('customDivider');
-    if (dividerInput) {
-        dividerInput.placeholder = lang === 'es' ? 'Ej: Chapter, ***, ---, Parte' : 'Ex: Chapter, ***, ---, Part';
-    }
-
-    console.log(`Language set to ${lang}`);
-}
-
-function switchSection(section) {
-    [uploadSection, selectSection, progressSection, resultsSection].forEach(s => s.classList.remove('active'));
-    section.classList.add('active');
-}
-
-async function handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
+async function loadLanguages() {
     try {
-        currentFile = file;
-        fileNameDisplay.textContent = file.name;
+        const languages = await API.getLanguages();
+        ui.languageSelect.innerHTML = '';
 
-        // Show loading
-        dropZone.innerHTML = '<p>Loading...</p>';
+        let defaultLang = 'es';
 
-        const text = await fileParser.parseFile(file);
-        // Restore drop zone text
-        dropZone.innerHTML = '<div class="icon">📄</div><p data-i18n="drop_text">Arrastra tu libro aquí</p><p class="subtext" data-i18n="drop_hint">o haz clic para seleccionar</p>';
-        setLanguage(currentLang); // refresh i18n
+        languages.forEach(lang => {
+            const opt = document.createElement('option');
+            opt.value = lang.codigo;
+            opt.textContent = lang.nombre;
+            if (lang.codigo === 'es') opt.selected = true;
+            ui.languageSelect.appendChild(opt);
+        });
 
-        currentChapters = splitter.split(text);
-
-        renderChapters(currentChapters);
-        switchSection(selectSection);
-
-    } catch (error) {
-        alert("Error al leer archivo: " + error.message);
-        console.error(error);
-        dropZone.innerHTML = '<div class="icon">📄</div><p>Error</p>';
-        setTimeout(() => setLanguage(currentLang), 2000);
+        await loadVoices();
+    } catch (e) {
+        console.error(e);
+        alert("Error cargando idiomas");
     }
-}
-
-function renderChapters(chapters) {
-    chapterList.innerHTML = '';
-    chapters.forEach(chap => {
-        const div = document.createElement('div');
-        div.className = 'chapter-item';
-        div.innerHTML = `
-            <label class="chapter-label" style="display: flex; align-items: center; width: 100%; cursor: pointer;">
-                <input type="checkbox" class="chapter-checkbox" data-id="${chap.id}" checked style="margin-right: 12px;">
-                <div class="chapter-info">
-                    <div class="chapter-title">${chap.titulo}</div>
-                    <div class="chapter-meta">${chap.chars} ${currentLang === 'es' ? 'caracteres' : 'characters'}</div>
-                </div>
-            </label>
-        `;
-        chapterList.appendChild(div);
-    });
-
-    document.querySelectorAll('.chapter-checkbox').forEach(cb => {
-        cb.addEventListener('change', updateSelection);
-    });
-    updateSelection();
-}
-
-function updateSelection() {
-    const checked = document.querySelectorAll('.chapter-checkbox:checked');
-    document.getElementById('selectedCount').textContent = `${checked.length} ${currentLang === 'es' ? 'seleccionados' : 'selected'}`;
-    btnConvert.disabled = checked.length === 0;
 }
 
 async function loadVoices() {
-    await toggleVoiceSource(false); // Default Native
-}
+    ui.voiceGrid.innerHTML = '<div class="spinner"></div>';
+    const langCode = ui.languageSelect.value;
 
-function populateFilters() {
-    let langs = new Set();
-
-    if (useCloudTTS) {
-        allVoices.forEach(v => {
-            if (v.Locale) langs.add(v.Locale.split('-')[0]);
-        });
-    } else {
-        allVoices.forEach(v => {
-            if (v.lang) langs.add(v.lang.split('-')[0]);
-        });
-    }
-
-    const sortedLangs = [...langs].sort();
-
-    langSelect.innerHTML = `<option value="">${currentLang === 'es' ? 'Todos los idiomas' : 'All languages'}</option>`;
-    sortedLangs.forEach(l => {
-        const opt = document.createElement('option');
-        opt.value = l;
-        opt.textContent = l.toUpperCase();
-        langSelect.appendChild(opt);
-    });
-
-    if (sortedLangs.includes('es')) {
-        langSelect.value = 'es';
+    try {
+        const voices = await API.getVoices(langCode);
+        renderVoiceGrid(voices);
+    } catch (e) {
+        ui.voiceGrid.innerHTML = '<p>Error cargando voces</p>';
     }
 }
 
-function filterVoices() {
-    const selectedLang = langSelect.value;
-    const selectedLocale = localeSelect.value;
+function renderVoiceGrid(voices) {
+    ui.voiceGrid.innerHTML = '';
 
-    filteredVoices = allVoices.filter(v => {
-        const vLang = useCloudTTS ? v.Locale : v.lang;
-        const langCode = vLang.split('-')[0];
-
-        if (selectedLang && langCode !== selectedLang) return false;
-        if (selectedLocale && vLang !== selectedLocale) return false;
-        return true;
-    });
-
-    // Populate Locale
-    if (selectedLang) {
-        const locales = new Set();
-        filteredVoices.forEach(v => locales.add(useCloudTTS ? v.Locale : v.lang));
-        const sortedLocales = [...locales].sort();
-
-        localeSelect.innerHTML = `<option value="">${currentLang === 'es' ? 'Todas las regiones' : 'All regions'}</option>`;
-        sortedLocales.forEach(l => {
-            const opt = document.createElement('option');
-            opt.value = l;
-            opt.textContent = l;
-            localeSelect.appendChild(opt);
-        });
-        localeSelect.style.display = 'block';
-        if (sortedLocales.includes(localeSelect.value)) localeSelect.value = localeSelect.value; // Keep selection if valid
-        else localeSelect.value = '';
-    } else {
-        localeSelect.style.display = 'none';
-        localeSelect.value = '';
-    }
-
-    renderVoiceGrid();
-}
-
-let selectedVoiceIndex = null; // Stores index (Native) or ShortName (Cloud)
-
-function renderVoiceGrid() {
-    voiceGrid.innerHTML = '';
-
-    if (filteredVoices.length === 0) {
-        voiceGrid.innerHTML = `<p style="grid-column: 1/-1; text-align: center; padding: 20px;">${currentLang === 'es' ? 'No hay voces' : 'No voices'}</p>`;
+    if (voices.length === 0) {
+        ui.voiceGrid.innerHTML = '<p>No hay voces disponibles</p>';
         return;
     }
 
-    filteredVoices.forEach((v, idx) => {
-        // Unique ID logic
-        // For Native: Use the index in the FULL allVoices array (to pass to capacitor)
-        // For Cloud: Use ShortName
-        const id = useCloudTTS ? v.ShortName : allVoices.indexOf(v);
-
-        const isSelected = selectedVoiceIndex === id;
-
+    voices.forEach(v => {
         const div = document.createElement('div');
+        const isSelected = v.id === selectedVoiceId;
         div.className = `voice-card ${isSelected ? 'selected' : ''}`;
 
-        const name = useCloudTTS ? (v.LocalName || v.ShortName) : (v.name || v.lang);
-        const lang = useCloudTTS ? v.Locale : v.lang;
-        const gender = useCloudTTS ? v.Gender : '';
-
         div.innerHTML = `
-            <div class="voice-header">
+            <div class="voice-header" onclick="selectVoice('${v.id}')">
                 <div class="voice-info">
-                    <div class="voice-name">${name}</div> 
-                    <div class="voice-meta">${lang} ${gender ? `• ${gender}` : ''}</div>
-                    ${useCloudTTS ? '<span style="font-size:0.7rem; color: #4ade80;">Cloud</span>' : ''}
+                    <div class="voice-name">${v.nombre}</div>
+                    <div class="voice-meta">${v.region} • ${v.genero}</div>
                 </div>
-                <button class="btn-preview-voice" title="Preview">▶️</button>
+                <button class="btn-preview-voice" onclick="event.stopPropagation(); playPreview('${v.id}')">▶️</button>
             </div>
         `;
-
-        div.onclick = (e) => {
-            if (e.target.classList.contains('btn-preview-voice')) {
-                e.stopPropagation();
-                previewVoice(v);
-                return;
-            }
-            selectVoice(id, div);
-        };
-        voiceGrid.appendChild(div);
+        ui.voiceGrid.appendChild(div);
     });
 }
 
-function selectVoice(id, element) {
-    document.querySelectorAll('.voice-card').forEach(c => c.classList.remove('selected'));
-    element.classList.add('selected');
-    selectedVoiceIndex = id;
-}
+window.selectVoice = (id) => {
+    selectedVoiceId = id;
+    localStorage.setItem('selected_voice_id', id);
+    // Re-render to update UI selection
+    const cards = document.querySelectorAll('.voice-card');
+    cards.forEach(c => c.classList.remove('selected'));
+    // Ideally we'd find the specific card, but a full re-render is safer or just toggling classes
+    loadVoices(); // Simple refresh
+};
 
-async function previewVoice(voice) {
-    const text = currentLang === 'es' ? "Hola, soy una voz de prueba." : "Hello, I am a test voice.";
+window.playPreview = async (voiceId) => {
+    const audio = new Audio(`${API.baseUrl}/probar-voz/${voiceId}`);
+    audio.play().catch(e => alert("Error reproduciendo audio: " + e.message));
+};
 
-    if (useCloudTTS) {
-        try {
-            const blob = await edgeTTS.synthesize(text, voice.ShortName, '+0%');
-            const url = URL.createObjectURL(blob);
-            const audio = new Audio(url);
-            audio.play();
-        } catch (err) {
-            console.error(err);
-            alert("Error: " + err.message);
-        }
-    } else {
-        const idx = allVoices.indexOf(voice);
-        try {
-            await TextToSpeech.speak({
-                text: text,
-                voice: idx,
-                rate: 1.0,
-                lang: voice.lang
-            });
-        } catch (err) { console.error(err); }
+async function handleFileUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    ui.statusText.textContent = "Subiendo archivo...";
+    ui.fileName.textContent = file.name;
+
+    try {
+        const res = await API.uploadFile(file);
+        currentFileId = res.file_id;
+        currentChapters = res.capitulos; // We could render chapters later
+        ui.statusText.textContent = `Archivo listo. ${currentChapters.length} capítulos detectados.`;
+        ui.convertBtn.disabled = false;
+
+    } catch (err) {
+        alert("Error al subir: " + err.message);
+        ui.statusText.textContent = "Error al subir.";
+        ui.fileName.textContent = "---";
     }
 }
 
 async function startConversion() {
-    if (isConverting) return;
+    if (!currentFileId) return;
 
-    if (selectedVoiceIndex === null) {
-        alert(currentLang === 'es' ? "Selecciona una voz primero" : "Select a voice first");
-        return;
+    ui.convertBtn.disabled = true;
+    ui.statusText.textContent = "Iniciando conversión remota...";
+
+    try {
+        // We select ALL chapters by default for now
+        const { job_id } = await API.convert(currentFileId, selectedVoiceId, []);
+
+        monitorJob(job_id);
+
+    } catch (err) {
+        alert("Error iniciando: " + err.message);
+        ui.convertBtn.disabled = false;
     }
-
-    isConverting = true;
-    switchSection(progressSection);
-
-    const checkedBoxes = document.querySelectorAll('.chapter-checkbox:checked');
-    const total = checkedBoxes.length;
-    let completed = 0;
-
-    // Create folder logic (Cloud only)
-    let folderName = "";
-    if (useCloudTTS) {
-        const bookTitle = fileNameDisplay.textContent.replace(/\.[^/.]+$/, "").replace(/[^a-z0-9]/gi, '_');
-        folderName = bookTitle;
-        // Try creating directory
-        try {
-            // Document directory might be messy, maybe create subdirectory VocoAudio
-            // For now, root of Documents
-        } catch (e) { }
-    }
-
-    for (const cb of checkedBoxes) {
-        const chapterId = parseInt(cb.dataset.id);
-        const chapter = currentChapters.find(c => c.id === chapterId);
-        const safeTitle = chapter.titulo.replace(/[^a-z0-9]/gi, '_');
-
-        const statusText = (currentLang === 'es' ? 'Convirtiendo: ' : 'Converting: ') + chapter.titulo;
-        document.getElementById('progressStatus').textContent = statusText;
-
-        try {
-            if (useCloudTTS) {
-                // Cloud: Synthesize and Save
-                const blob = await edgeTTS.synthesize(chapter.contenido, selectedVoiceIndex); // selectedVoiceIndex is ShortName
-
-                // Converting Blob to Base64 for Filesystem write
-                const reader = new FileReader();
-                reader.readAsDataURL(blob);
-                await new Promise(resolve => {
-                    reader.onloadend = async () => {
-                        const base64Data = reader.result.split(',')[1];
-                        const fileName = `${folderName}/${safeTitle}.mp3`;
-
-                        try {
-                            const written = await Filesystem.writeFile({
-                                path: fileName,
-                                data: base64Data,
-                                directory: Directory.Documents,
-                                recursive: true
-                            });
-                            console.log(`Saved ${fileName}`, written.uri);
-
-                            // Optional: Play the last one or first one?
-                            // For now just save.
-                        } catch (e) {
-                            console.error("Save error", e);
-                            alert("Error saving file: " + e.message);
-                        }
-                        resolve();
-                    };
-                });
-
-            } else {
-                // Native: Speak
-                await TextToSpeech.speak({
-                    text: chapter.contenido,
-                    voice: selectedVoiceIndex,
-                    rate: 1.0,
-                    lang: 'es-ES'
-                });
-            }
-
-        } catch (err) {
-            console.error("Conversion error", err);
-        }
-
-        completed++;
-        const percent = Math.round((completed / total) * 100);
-        document.getElementById('progressBar').style.width = `${percent}%`;
-        document.getElementById('progressPercent').textContent = `${percent}%`;
-    }
-
-    isConverting = false;
-    switchSection(resultsSection);
-
-    // Final Message
-    const msg = currentLang === 'es' ?
-        (useCloudTTS ? "Archivos guardados en Documentos" : "Lectura finalizada") :
-        (useCloudTTS ? "Files saved to Documents" : "Reading finished");
-
-    document.getElementById('results-header-text').textContent = msg;
 }
 
-// Global expose
-window.setVoiceSource = toggleVoiceSource;
+async function monitorJob(jobId) {
+    const poll = setInterval(async () => {
+        try {
+            const status = await API.getJobStatus(jobId);
 
-// I18n Data
-const translations = {
-    es: {
-        title: "Conversor de Audiolibros",
-        subtitle: "TXT • PDF • EPUB → MP3",
-        step_upload: "Subir",
-        step_select: "Seleccionar",
-        step_convert: "Convertir",
-        drop_text: "Arrastra tu libro aquí",
-        drop_hint: "o haz clic para seleccionar • TXT, PDF, EPUB",
-        btn_change: "Cambiar",
-        voice_title: "🗣️ Voz del narrador",
-        voice_lang: "🌐 Idioma",
-        divider_title: "✂️ Separador de capítulos",
-        chapters_title: "📖 Capítulos a convertir",
-        btn_all: "✓ Todos",
-        btn_none: "✗ Ninguno",
-        btn_convert: "🎙️ Convertir seleccionados",
-        results_done: "¡Conversión completada!",
-        btn_new: "📚 Convertir otro libro",
-        settings_title: "⚙️ Configuración",
-        settings_lang: "🌐 Idioma",
-        btn_cancel: "Cancelar",
-        btn_save: "Aceptar"
-    },
-    en: {
-        title: "Audiobook Converter",
-        subtitle: "TXT • PDF • EPUB → MP3",
-        step_upload: "Upload",
-        step_select: "Select",
-        step_convert: "Convert",
-        drop_text: "Drag your book here",
-        drop_hint: "or click to select • TXT, PDF, EPUB",
-        btn_change: "Change",
-        voice_title: "🗣️ Narrator Voice",
-        voice_lang: "🌐 Language",
-        divider_title: "✂️ Chapter Splitter",
-        chapters_title: "📖 Chapters to convert",
-        btn_all: "✓ All",
-        btn_none: "✗ None",
-        btn_convert: "🎙️ Convert selected",
-        results_done: "Conversion complete!",
-        btn_new: "📚 Convert another book",
-        settings_title: "⚙️ Settings",
-        settings_lang: "🌐 Language",
-        btn_cancel: "Cancel",
-        btn_save: "OK"
+            if (status.estado === 'convirtiendo' || status.estado === 'iniciando') {
+                const pct = Math.round((status.actual / status.total) * 100);
+                ui.progressBar.style.width = `${pct}%`;
+                ui.statusText.textContent = `Convirtiendo: ${pct}% (${status.actual}/${status.total})`;
+
+            } else if (status.estado === 'completado') {
+                clearInterval(poll);
+                ui.progressBar.style.width = '100%';
+                ui.statusText.textContent = "¡Completado! Descargando a tu celular...";
+                await downloadResults(jobId);
+                ui.convertBtn.disabled = false;
+
+            } else if (status.estado === 'error') {
+                clearInterval(poll);
+                ui.statusText.textContent = "Error en el servidor: " + status.error;
+                ui.convertBtn.disabled = false;
+            }
+
+        } catch (e) {
+            console.error("Polling error", e);
+        }
+    }, 1000);
+}
+
+async function downloadResults(jobId) {
+    try {
+        const res = await fetch(`${API.baseUrl}/descargas/${jobId}`);
+        const data = await res.json();
+
+        for (const file of data.archivos) {
+            ui.statusText.textContent = `Descargando ${file.nombre}...`;
+
+            // Download Blob from Server
+            const dlRes = await fetch(API.getDownloadUrl(jobId, file.nombre));
+            const blob = await dlRes.blob();
+
+            // Convert to Base64 for Capacitor Filesystem
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+
+            await new Promise((resolve, reject) => {
+                reader.onloadend = async () => {
+                    const base64Data = reader.result.split(',')[1];
+                    try {
+                        const fileName = `Audiolibros_Voco/${file.nombre}`;
+                        await Filesystem.writeFile({
+                            path: fileName,
+                            data: base64Data,
+                            directory: Directory.Documents,
+                            recursive: true
+                        });
+                        console.log(`Saved ${fileName}`);
+                        resolve();
+                    } catch (e) {
+                        console.error("Save error", e);
+                        reject(e);
+                    }
+                };
+                reader.onerror = reject;
+            });
+        }
+
+        ui.statusText.textContent = "¡Todo guardado en Documentos/Audiolibros_Voco!";
+        alert("¡Listo! Archivos guardados en tu carpeta de Documentos.");
+
+    } catch (e) {
+        console.error(e);
+        alert("Error descargando resultados: " + e.message);
+        ui.statusText.textContent = "Error en descarga final.";
     }
-};
+}
