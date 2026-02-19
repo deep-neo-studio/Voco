@@ -1,5 +1,10 @@
 {
   "appId": "com.audiolibros.app",
   "appName": "Voco",
-  "webDir": "public"
+  "webDir": "public",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
 }

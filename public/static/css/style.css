@@ -51,8 +51,15 @@ header {
 }
 
 @keyframes float {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-8px); }
+
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-8px);
+    }
 }
 
 h1 {
@@ -151,7 +158,10 @@ h1 {
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
 }
 
 /* Voice Selection */
@@ -245,7 +255,9 @@ h1 {
 }
 
 @keyframes spin {
-    to { transform: rotate(360deg); }
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .voice-card {
@@ -826,15 +838,57 @@ h1 {
 }
 
 @media (max-width: 600px) {
-    .voice-grid {
-        grid-template-columns: 1fr;
+    .container {
+        padding: 20px 15px;
+    }
+
+    .logo {
+        font-size: 2.5rem;
     }
 
     h1 {
-        font-size: 1.7rem;
+        font-size: 1.6rem;
+    }
+
+    .subtitle {
+        font-size: 0.9rem;
     }
 
     .steps {
-        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .step {
+        padding: 6px 10px;
+        font-size: 0.75rem;
+    }
+
+    .drop-zone {
+        padding: 30px 15px;
+    }
+
+    .voice-grid {
+        grid-template-columns: 1fr;
+        max-height: 400px;
+        /* More space for scrolling on mobile */
+    }
+
+    .voice-card {
+        padding: 10px;
+    }
+
+    .btn-primary {
+        padding: 14px;
+        font-size: 1rem;
+    }
+
+    /* Modal adjustments */
+    .modal-content {
+        width: 95%;
+        padding: 20px;
+    }
+
+    .lang-options {
+        grid-template-columns: 1fr 1fr;
     }
 }

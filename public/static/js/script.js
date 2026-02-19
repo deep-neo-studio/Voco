@@ -403,13 +403,7 @@ localeSelect.addEventListener('change', () => {
     loadVoicesForLocale(locale, lang);
 });
 
-// Helper for i18n
-function initI18n() {
-    // ... (Similar to original but simplified)
-    const lang = localStorage.getItem('audiolib_ui_lang') || 'es';
-    document.documentElement.lang = lang;
-    // Apply translations... (omitted for brevity, can copy from original if needed)
-}
+
 // Listeners for Select All/None
 document.getElementById('btnSelectAll').addEventListener('click', () => {
     document.querySelectorAll('#chapterList input').forEach(cb => cb.checked = true);

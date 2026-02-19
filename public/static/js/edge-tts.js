@@ -1,3 +1,5 @@
+import { CapacitorHttp } from '@capacitor/core';
+
 // Helper for UUID
 function generateUUID() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
@@ -114,12 +116,28 @@ export class EdgeTTS {
     static async getVoices() {
         const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
         const url = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`;
+
         try {
-            const response = await fetch(url);
-            return await response.json();
+            // Use CapacitorHttp to bypass CORS
+            const response = await CapacitorHttp.get({ url });
+
+            if (response.status !== 200) {
+                throw new Error(`Status ${response.status}`);
+            }
+
+            return response.data;
         } catch (e) {
-            console.error("Error fetching voices:", e);
-            return [];
+            console.error("Error fetching voices with CapacitorHttp:", e);
+
+            // Fallback to fetch for web/dev
+            try {
+                console.log("Falling back to standard fetch...");
+                const response = await fetch(url);
+                return await response.json();
+            } catch (err) {
+                console.error("Error fetching voices (fallback):", err);
+                return [];
+            }
         }
     }
 }
