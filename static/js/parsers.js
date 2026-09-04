@@ -32,23 +32,217 @@ export class LocalParser {
 
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-        let fullText = '';
+        const pagesLines = [];
 
         for (let i = 1; i <= pdf.numPages; i++) {
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
-            const pageText = textContent.items.map(item => item.str).join(' ');
-            fullText += pageText + '\n\n';
+            const lines = this.extractPageLines(textContent);
+            pagesLines.push(lines);
         }
-        return fullText;
+
+        return this.cleanHeadersAndFooters(pagesLines);
+    }
+
+    static extractPageLines(textContent) {
+        if (!textContent || !textContent.items || textContent.items.length === 0) return [];
+
+        const lines = [];
+        let currentLine = [];
+        let currentY = null;
+
+        for (const item of textContent.items) {
+            const str = item.str || '';
+            const y = item.transform ? Math.round(item.transform[5]) : null;
+            const isNewLine = item.hasEOL || (currentY !== null && y !== null && Math.abs(y - currentY) > 4);
+
+            if (isNewLine) {
+                if (str.trim()) currentLine.push(str);
+                const lineStr = currentLine.join(' ').replace(/\s+/g, ' ').trim();
+                if (lineStr) lines.push(lineStr);
+                currentLine = [];
+                currentY = y;
+            } else {
+                if (str.trim()) currentLine.push(str);
+                if (currentY === null && y !== null) currentY = y;
+            }
+        }
+
+        if (currentLine.length > 0) {
+            const lineStr = currentLine.join(' ').replace(/\s+/g, ' ').trim();
+            if (lineStr) lines.push(lineStr);
+        }
+
+        return lines;
+    }
+
+    static cleanHeadersAndFooters(pagesLines) {
+        if (!pagesLines || pagesLines.length === 0) return '';
+
+        const totalPages = pagesLines.length;
+        const pagePrefixRegex = /^(.*?(?:p[aá]g(?:ina)?\.?|page)\s*\d+)(.*)$/i;
+
+        const topFixedCounts = new Map();
+        const topTemplateCounts = new Map();
+        const bottomFixedCounts = new Map();
+        const bottomTemplateCounts = new Map();
+
+        for (const lines of pagesLines) {
+            if (!lines || lines.length === 0) continue;
+
+            const topLines = lines.slice(0, 3);
+            for (const line of topLines) {
+                const norm = line.replace(/\s+/g, ' ').trim();
+                topFixedCounts.set(norm, (topFixedCounts.get(norm) || 0) + 1);
+
+                const match = norm.match(pagePrefixRegex);
+                const prefix = match ? match[1].trim() : norm;
+                const template = prefix.replace(/\d+/g, '#').trim();
+                topTemplateCounts.set(template, (topTemplateCounts.get(template) || 0) + 1);
+            }
+
+            const bottomLines = lines.slice(-3);
+            for (const line of bottomLines) {
+                const norm = line.replace(/\s+/g, ' ').trim();
+                bottomFixedCounts.set(norm, (bottomFixedCounts.get(norm) || 0) + 1);
+
+                const match = norm.match(pagePrefixRegex);
+                const prefix = match ? match[1].trim() : norm;
+                const template = prefix.replace(/\d+/g, '#').trim();
+                bottomTemplateCounts.set(template, (bottomTemplateCounts.get(template) || 0) + 1);
+            }
+        }
+
+        const threshold = totalPages >= 5 ? Math.max(3, Math.floor(totalPages * 0.15)) : 2;
+
+        const detectedTopTemplates = new Set();
+        for (const [tmpl, count] of topTemplateCounts.entries()) {
+            if (count >= threshold && (tmpl.includes('#') || tmpl.length > 5)) {
+                detectedTopTemplates.add(tmpl);
+            }
+        }
+
+        const detectedTopFixed = new Set();
+        for (const [fixed, count] of topFixedCounts.entries()) {
+            if (count >= threshold && fixed.length > 3) {
+                detectedTopFixed.add(fixed);
+            }
+        }
+
+        const detectedBottomTemplates = new Set();
+        for (const [tmpl, count] of bottomTemplateCounts.entries()) {
+            if (count >= threshold && (tmpl.includes('#') || tmpl.length > 5)) {
+                detectedBottomTemplates.add(tmpl);
+            }
+        }
+
+        const detectedBottomFixed = new Set();
+        for (const [fixed, count] of bottomFixedCounts.entries()) {
+            if (count >= threshold && fixed.length > 3) {
+                detectedBottomFixed.add(fixed);
+            }
+        }
+
+        const isolatedNumberRegex = /^[-—~•·|/]?\s*\d{1,5}\s*[-—~•·|/]?$/;
+        const isolatedPageRegex = /^(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?$/i;
+        const compoundMarginRegex = /^(?:[^\n]{2,60}?\s*[-–—|•·/]\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?|(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?\s*[-–—|•·/]\s*[^\n]{2,60})$/i;
+
+        function matchTemplate(text, templates) {
+            const m = text.match(pagePrefixRegex);
+            const pref = m ? m[1].trim() : text;
+            const tmpl = pref.replace(/\d+/g, '#').trim();
+            return { matches: templates.has(tmpl), match: m };
+        }
+
+        let totalRemoved = 0;
+        const cleanedPages = [];
+
+        for (const lines of pagesLines) {
+            if (!lines || lines.length === 0) continue;
+            const resLines = [...lines];
+
+            // 1. Limpiar margen superior (TOP)
+            let idx = 0;
+            while (idx < Math.min(3, resLines.length)) {
+                const line = resLines[idx].trim();
+                const norm = line.replace(/\s+/g, ' ');
+
+                if (detectedTopFixed.has(norm)) {
+                    resLines.splice(idx, 1);
+                    totalRemoved++;
+                    continue;
+                }
+
+                const { matches, match } = matchTemplate(norm, detectedTopTemplates);
+                if (matches) {
+                    totalRemoved++;
+                    if (match && match[2].trim()) {
+                        resLines[idx] = match[2].trim();
+                        break;
+                    } else {
+                        resLines.splice(idx, 1);
+                        continue;
+                    }
+                }
+
+                if (isolatedNumberRegex.test(norm) || isolatedPageRegex.test(norm) || compoundMarginRegex.test(norm)) {
+                    resLines.splice(idx, 1);
+                    totalRemoved++;
+                    continue;
+                }
+
+                idx++;
+            }
+
+            // 2. Limpiar margen inferior (BOTTOM)
+            let checkedBottom = 0;
+            while (resLines.length > 0 && checkedBottom < 3) {
+                const line = resLines[resLines.length - 1].trim();
+                const norm = line.replace(/\s+/g, ' ');
+
+                if (detectedBottomFixed.has(norm)) {
+                    resLines.pop();
+                    totalRemoved++;
+                    checkedBottom++;
+                    continue;
+                }
+
+                const { matches, match } = matchTemplate(norm, detectedBottomTemplates);
+                if (matches) {
+                    totalRemoved++;
+                    if (match && match[2].trim()) {
+                        resLines[resLines.length - 1] = match[2].trim();
+                        break;
+                    } else {
+                        resLines.pop();
+                        checkedBottom++;
+                        continue;
+                    }
+                }
+
+                if (isolatedNumberRegex.test(norm) || isolatedPageRegex.test(norm) || compoundMarginRegex.test(norm)) {
+                    resLines.pop();
+                    totalRemoved++;
+                    checkedBottom++;
+                    continue;
+                }
+
+                break;
+            }
+
+            if (resLines.length > 0) {
+                cleanedPages.push(resLines.join('\n'));
+            }
+        }
+
+        if (totalRemoved > 0) {
+            console.log(`🧹 [PDF Clean] Se removieron ${totalRemoved} encabezados y pies de página repetitivos.`);
+        }
+
+        return cleanedPages.join('\n\n');
     }
 
     static async readEPUB(file) {
-        // Requires JSZip. Since we are using a simple script approach, we assume JSZip is available globally or we use a library that handles it.
-        // Actually, extracting text from EPUB manually is complex. 
-        // Better to use 'epubjs' library or unzip content.opf -> find html files -> extract text.
-        // For simplicity and robustness, let's use JSZip to read container.xml -> content.opf -> spine -> htmls
-
         if (!window.JSZip) throw new Error("JSZip no cargado");
 
         const zip = new JSZip();
@@ -81,10 +275,7 @@ export class LocalParser {
             let href = idToHref[id];
             if (opfDir) href = opfDir + '/' + href;
 
-            // Decrypt? No, assume standard epub
             const htmlContent = await content.file(href).async("string");
-
-            // Extract text from HTML
             const doc = parser.parseFromString(htmlContent, "text/html");
             fullText += doc.body.textContent + '\n\n';
         }
@@ -101,19 +292,20 @@ export class LocalParser {
 
         const parts = text.split(pattern);
 
-        // Reassemble regex splits which usually include the separator
-        // If split by regex with capturing group, the separator is included in the array.
-        // [pre, sep, post, sep, post...]
-
         if (parts.length < 3 && !separator) {
             // Fallback to chunking
             const CHUNK_SIZE = 5000;
             for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+                const chunk = text.slice(i, i + CHUNK_SIZE);
+                const words = (chunk.match(/\b\w+\b/g) || []).length;
+                if (words < 30) continue;
                 chapters.push({
                     id: i,
                     titulo: `Parte ${Math.floor(i / CHUNK_SIZE) + 1}`,
-                    contenido: text.slice(i, i + CHUNK_SIZE),
-                    chars: Math.min(CHUNK_SIZE, text.length - i)
+                    contenido: chunk,
+                    chars: Math.min(CHUNK_SIZE, text.length - i),
+                    palabras: words,
+                    tiempo_estimado_min: Math.round(words / 150 * 10) / 10
                 });
             }
             return chapters;
@@ -123,7 +315,17 @@ export class LocalParser {
         let currentContent = parts[0];
 
         if (currentContent.trim()) {
-            chapters.push({ id: 0, titulo: currentTitle, contenido: currentContent, chars: currentContent.length });
+            const words = (currentContent.match(/\b\w+\b/g) || []).length;
+            if (words >= 30) {
+                chapters.push({
+                    id: 0,
+                    titulo: currentTitle,
+                    contenido: currentContent,
+                    chars: currentContent.length,
+                    palabras: words,
+                    tiempo_estimado_min: Math.round(words / 150 * 10) / 10
+                });
+            }
         }
 
         let idCounter = 1;
@@ -131,11 +333,15 @@ export class LocalParser {
             const title = parts[i];
             const content = parts[i + 1];
             if (content && content.trim()) {
+                const words = (content.match(/\b\w+\b/g) || []).length;
+                if (words < 30) continue;
                 chapters.push({
                     id: idCounter++,
                     titulo: title.trim().substring(0, 50),
                     contenido: content,
-                    chars: content.length
+                    chars: content.length,
+                    palabras: words,
+                    tiempo_estimado_min: Math.round(words / 150 * 10) / 10
                 });
             }
         }

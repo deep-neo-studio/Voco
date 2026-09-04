@@ -15,6 +15,7 @@ import hashlib
 import shutil
 import uuid
 from pathlib import Path
+from collections import Counter
 
 from flask import Flask, render_template, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -182,11 +183,174 @@ def archivo_permitido(nombre):
     return '.' in nombre and nombre.rsplit('.', 1)[1].lower() in EXTENSIONES_PERMITIDAS
 
 
+def limpiar_encabezados_pies_pdf(paginas):
+    """
+    Detecta y elimina de forma inteligente encabezados, pies de página y numeraciones
+    repetitivas entre páginas de un PDF, protegiendo 100% el texto narrativo normal.
+    """
+    if not paginas:
+        return ""
+
+    total_paginas = len(paginas)
+    patron_prefijo_pagina = re.compile(
+        r'^(.*?(?:p[aá]g(?:ina)?\.?|page)\s*\d+)(.*)$',
+        re.IGNORECASE
+    )
+
+    candidatos_top_fijos = Counter()
+    candidatos_top_plantillas = Counter()
+    candidatos_bottom_fijos = Counter()
+    candidatos_bottom_plantillas = Counter()
+
+    paginas_lineas = []
+
+    for p in paginas:
+        lineas = [l.strip() for l in p.split('\n') if l.strip()]
+        paginas_lineas.append(lineas)
+        if not lineas:
+            continue
+
+        # Analizar hasta las 3 primeras líneas de cada página
+        for l in lineas[:3]:
+            l_norm = re.sub(r'\s+', ' ', l)
+            candidatos_top_fijos[l_norm] += 1
+            m = patron_prefijo_pagina.match(l_norm)
+            prefix = m.group(1).strip() if m else l_norm
+            plantilla = re.sub(r'\d+', '#', prefix).strip()
+            candidatos_top_plantillas[plantilla] += 1
+
+        # Analizar hasta las 3 últimas líneas de cada página
+        for l in lineas[-3:]:
+            l_norm = re.sub(r'\s+', ' ', l)
+            candidatos_bottom_fijos[l_norm] += 1
+            m = patron_prefijo_pagina.match(l_norm)
+            prefix = m.group(1).strip() if m else l_norm
+            plantilla = re.sub(r'\d+', '#', prefix).strip()
+            candidatos_bottom_plantillas[plantilla] += 1
+
+    # Umbral: debe repetirse en >= 15% de las páginas (mínimo 3 páginas si total >= 5, o 2 si 3-4 páginas)
+    umbral = max(3, int(total_paginas * 0.15)) if total_paginas >= 5 else 2
+
+    plantillas_top_detectadas = {
+        p for p, c in candidatos_top_plantillas.items()
+        if c >= umbral and ('#' in p or len(p) > 5)
+    }
+    fijos_top_detectados = {
+        f for f, c in candidatos_top_fijos.items()
+        if c >= umbral and len(f) > 3
+    }
+    plantillas_bottom_detectadas = {
+        p for p, c in candidatos_bottom_plantillas.items()
+        if c >= umbral and ('#' in p or len(p) > 5)
+    }
+    fijos_bottom_detectados = {
+        f for f, c in candidatos_bottom_fijos.items()
+        if c >= umbral and len(f) > 3
+    }
+
+    # Patrones estructurales de margen para líneas de número de página aisladas
+    patron_numero_aislado = re.compile(r'^[-—~•·|/]?\s*\d{1,5}\s*[-—~•·|/]?$')
+    patron_pagina_aislada = re.compile(r'^(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|/)\s*\d+)?$', re.IGNORECASE)
+    patron_header_footer_compuesto = re.compile(
+        r'^(?:[^\n]{2,60}?\s*[-–—|•·/]\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|/)\s*\d+)?|'
+        r'(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|/)\s*\d+)?\s*[-–—|•·/]\s*[^\n]{2,60})$',
+        re.IGNORECASE
+    )
+
+    def coincide_con_plantillas(texto, plantillas):
+        m = patron_prefijo_pagina.match(texto)
+        pref = m.group(1).strip() if m else texto
+        plant = re.sub(r'\d+', '#', pref).strip()
+        return (plant in plantillas), m
+
+    total_removidos = 0
+    paginas_limpias = []
+
+    for lineas in paginas_lineas:
+        if not lineas:
+            continue
+
+        lineas_resultado = list(lineas)
+
+        # 1. Limpieza en margen superior (TOP)
+        idx = 0
+        while idx < min(3, len(lineas_resultado)):
+            linea = lineas_resultado[idx].strip()
+            linea_norm = re.sub(r'\s+', ' ', linea)
+
+            if linea_norm in fijos_top_detectados:
+                lineas_resultado.pop(idx)
+                total_removidos += 1
+                continue
+
+            coincide, match = coincide_con_plantillas(linea_norm, plantillas_top_detectadas)
+            if coincide:
+                total_removidos += 1
+                if match and match.group(2).strip():
+                    # Si el encabezado viene pegado al inicio del texto narrativo, conservar el texto
+                    lineas_resultado[idx] = match.group(2).strip()
+                    break
+                else:
+                    lineas_resultado.pop(idx)
+                    continue
+
+            if (patron_numero_aislado.match(linea_norm) or
+                patron_pagina_aislada.match(linea_norm) or
+                patron_header_footer_compuesto.match(linea_norm)):
+                lineas_resultado.pop(idx)
+                total_removidos += 1
+                continue
+
+            idx += 1
+
+        # 2. Limpieza en margen inferior (BOTTOM)
+        checked_bottom = 0
+        while lineas_resultado and checked_bottom < 3:
+            linea = lineas_resultado[-1].strip()
+            linea_norm = re.sub(r'\s+', ' ', linea)
+
+            if linea_norm in fijos_bottom_detectados:
+                lineas_resultado.pop()
+                total_removidos += 1
+                checked_bottom += 1
+                continue
+
+            coincide, match = coincide_con_plantillas(linea_norm, plantillas_bottom_detectadas)
+            if coincide:
+                total_removidos += 1
+                if match and match.group(2).strip():
+                    lineas_resultado[-1] = match.group(2).strip()
+                    break
+                else:
+                    lineas_resultado.pop()
+                    checked_bottom += 1
+                    continue
+
+            if (patron_numero_aislado.match(linea_norm) or
+                patron_pagina_aislada.match(linea_norm) or
+                patron_header_footer_compuesto.match(linea_norm)):
+                lineas_resultado.pop()
+                total_removidos += 1
+                checked_bottom += 1
+                continue
+
+            break
+
+        if lineas_resultado:
+            paginas_limpias.append('\n'.join(lineas_resultado))
+
+    if total_removidos > 0:
+        print(f"🧹 [PDF Clean] Se removieron {total_removidos} encabezados y pies de página repetitivos.")
+
+    return '\n\n'.join(paginas_limpias)
+
+
 def extraer_texto_pdf(ruta):
     try:
         from PyPDF2 import PdfReader
         reader = PdfReader(ruta)
-        return ''.join(p.extract_text() or '' for p in reader.pages)
+        paginas = [p.extract_text() or '' for p in reader.pages]
+        return limpiar_encabezados_pies_pdf(paginas)
     except ImportError:
         raise Exception("PyPDF2 no instalado")
 
@@ -295,6 +459,8 @@ def dividir_por_capitulos(texto, separador_custom=None):
 
 
 def limpiar_texto(texto):
+    # Eliminar líneas aisladas residuales que solo contengan indicadores explícitos de página
+    texto = re.sub(r'(?im)^[-—~•·|/]?\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d{1,5}(?:\s*(?:de|/)\s*\d+)?\s*[-—~•·|/]?\s*$', '', texto)
     texto = re.sub(r'\n{3,}', '\n\n', texto)
     texto = re.sub(r'[—–]', ', ', texto)
     texto = re.sub(r'[^\w\s.,;:!?¿¡\'\"()áéíóúüñÁÉÍÓÚÜÑ\-]', ' ', texto)

@@ -25850,14 +25850,174 @@ var init_parsers = __esm({
         GlobalWorkerOptions.workerSrc = base + "static/js/pdf.worker.mjs";
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await getDocument(arrayBuffer).promise;
-        let fullText = "";
+        const pagesLines = [];
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
           const textContent = await page.getTextContent();
-          const pageText = textContent.items.map((item) => item.str).join(" ");
-          fullText += pageText + "\n\n";
+          const lines = this.extractPageLines(textContent);
+          pagesLines.push(lines);
         }
-        return fullText;
+        return this.cleanHeadersAndFooters(pagesLines);
+      }
+      static extractPageLines(textContent) {
+        if (!textContent || !textContent.items || textContent.items.length === 0) return [];
+        const lines = [];
+        let currentLine = [];
+        let currentY = null;
+        for (const item of textContent.items) {
+          const str = item.str || "";
+          const y = item.transform ? Math.round(item.transform[5]) : null;
+          const isNewLine = item.hasEOL || currentY !== null && y !== null && Math.abs(y - currentY) > 4;
+          if (isNewLine) {
+            if (str.trim()) currentLine.push(str);
+            const lineStr = currentLine.join(" ").replace(/\s+/g, " ").trim();
+            if (lineStr) lines.push(lineStr);
+            currentLine = [];
+            currentY = y;
+          } else {
+            if (str.trim()) currentLine.push(str);
+            if (currentY === null && y !== null) currentY = y;
+          }
+        }
+        if (currentLine.length > 0) {
+          const lineStr = currentLine.join(" ").replace(/\s+/g, " ").trim();
+          if (lineStr) lines.push(lineStr);
+        }
+        return lines;
+      }
+      static cleanHeadersAndFooters(pagesLines) {
+        if (!pagesLines || pagesLines.length === 0) return "";
+        const totalPages = pagesLines.length;
+        const pagePrefixRegex = /^(.*?(?:p[aá]g(?:ina)?\.?|page)\s*\d+)(.*)$/i;
+        const topFixedCounts = /* @__PURE__ */ new Map();
+        const topTemplateCounts = /* @__PURE__ */ new Map();
+        const bottomFixedCounts = /* @__PURE__ */ new Map();
+        const bottomTemplateCounts = /* @__PURE__ */ new Map();
+        for (const lines of pagesLines) {
+          if (!lines || lines.length === 0) continue;
+          const topLines = lines.slice(0, 3);
+          for (const line of topLines) {
+            const norm = line.replace(/\s+/g, " ").trim();
+            topFixedCounts.set(norm, (topFixedCounts.get(norm) || 0) + 1);
+            const match = norm.match(pagePrefixRegex);
+            const prefix = match ? match[1].trim() : norm;
+            const template = prefix.replace(/\d+/g, "#").trim();
+            topTemplateCounts.set(template, (topTemplateCounts.get(template) || 0) + 1);
+          }
+          const bottomLines = lines.slice(-3);
+          for (const line of bottomLines) {
+            const norm = line.replace(/\s+/g, " ").trim();
+            bottomFixedCounts.set(norm, (bottomFixedCounts.get(norm) || 0) + 1);
+            const match = norm.match(pagePrefixRegex);
+            const prefix = match ? match[1].trim() : norm;
+            const template = prefix.replace(/\d+/g, "#").trim();
+            bottomTemplateCounts.set(template, (bottomTemplateCounts.get(template) || 0) + 1);
+          }
+        }
+        const threshold = totalPages >= 5 ? Math.max(3, Math.floor(totalPages * 0.15)) : 2;
+        const detectedTopTemplates = /* @__PURE__ */ new Set();
+        for (const [tmpl, count] of topTemplateCounts.entries()) {
+          if (count >= threshold && (tmpl.includes("#") || tmpl.length > 5)) {
+            detectedTopTemplates.add(tmpl);
+          }
+        }
+        const detectedTopFixed = /* @__PURE__ */ new Set();
+        for (const [fixed, count] of topFixedCounts.entries()) {
+          if (count >= threshold && fixed.length > 3) {
+            detectedTopFixed.add(fixed);
+          }
+        }
+        const detectedBottomTemplates = /* @__PURE__ */ new Set();
+        for (const [tmpl, count] of bottomTemplateCounts.entries()) {
+          if (count >= threshold && (tmpl.includes("#") || tmpl.length > 5)) {
+            detectedBottomTemplates.add(tmpl);
+          }
+        }
+        const detectedBottomFixed = /* @__PURE__ */ new Set();
+        for (const [fixed, count] of bottomFixedCounts.entries()) {
+          if (count >= threshold && fixed.length > 3) {
+            detectedBottomFixed.add(fixed);
+          }
+        }
+        const isolatedNumberRegex = /^[-—~•·|/]?\s*\d{1,5}\s*[-—~•·|/]?$/;
+        const isolatedPageRegex = /^(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?$/i;
+        const compoundMarginRegex = /^(?:[^\n]{2,60}?\s*[-–—|•·/]\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?|(?:p[aá]g(?:ina)?\.?|page)\s*\d+(?:\s*(?:de|\/)\s*\d+)?\s*[-–—|•·/]\s*[^\n]{2,60})$/i;
+        function matchTemplate(text, templates) {
+          const m = text.match(pagePrefixRegex);
+          const pref = m ? m[1].trim() : text;
+          const tmpl = pref.replace(/\d+/g, "#").trim();
+          return { matches: templates.has(tmpl), match: m };
+        }
+        let totalRemoved = 0;
+        const cleanedPages = [];
+        for (const lines of pagesLines) {
+          if (!lines || lines.length === 0) continue;
+          const resLines = [...lines];
+          let idx = 0;
+          while (idx < Math.min(3, resLines.length)) {
+            const line = resLines[idx].trim();
+            const norm = line.replace(/\s+/g, " ");
+            if (detectedTopFixed.has(norm)) {
+              resLines.splice(idx, 1);
+              totalRemoved++;
+              continue;
+            }
+            const { matches, match } = matchTemplate(norm, detectedTopTemplates);
+            if (matches) {
+              totalRemoved++;
+              if (match && match[2].trim()) {
+                resLines[idx] = match[2].trim();
+                break;
+              } else {
+                resLines.splice(idx, 1);
+                continue;
+              }
+            }
+            if (isolatedNumberRegex.test(norm) || isolatedPageRegex.test(norm) || compoundMarginRegex.test(norm)) {
+              resLines.splice(idx, 1);
+              totalRemoved++;
+              continue;
+            }
+            idx++;
+          }
+          let checkedBottom = 0;
+          while (resLines.length > 0 && checkedBottom < 3) {
+            const line = resLines[resLines.length - 1].trim();
+            const norm = line.replace(/\s+/g, " ");
+            if (detectedBottomFixed.has(norm)) {
+              resLines.pop();
+              totalRemoved++;
+              checkedBottom++;
+              continue;
+            }
+            const { matches, match } = matchTemplate(norm, detectedBottomTemplates);
+            if (matches) {
+              totalRemoved++;
+              if (match && match[2].trim()) {
+                resLines[resLines.length - 1] = match[2].trim();
+                break;
+              } else {
+                resLines.pop();
+                checkedBottom++;
+                continue;
+              }
+            }
+            if (isolatedNumberRegex.test(norm) || isolatedPageRegex.test(norm) || compoundMarginRegex.test(norm)) {
+              resLines.pop();
+              totalRemoved++;
+              checkedBottom++;
+              continue;
+            }
+            break;
+          }
+          if (resLines.length > 0) {
+            cleanedPages.push(resLines.join("\n"));
+          }
+        }
+        if (totalRemoved > 0) {
+          console.log(`\u{1F9F9} [PDF Clean Mobile] Se removieron ${totalRemoved} encabezados y pies de p\xE1gina repetitivos.`);
+        }
+        return cleanedPages.join("\n\n");
       }
       static async readEPUB(file) {
         if (!window.JSZip) throw new Error("JSZip no cargado");
@@ -25894,11 +26054,16 @@ var init_parsers = __esm({
         if (parts.length < 3 && !separator) {
           const CHUNK_SIZE = 5e3;
           for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+            const chunk = text.slice(i, i + CHUNK_SIZE);
+            const words = (chunk.match(/\b\w+\b/g) || []).length;
+            if (words < 30) continue;
             chapters.push({
               id: i,
               titulo: `Parte ${Math.floor(i / CHUNK_SIZE) + 1}`,
-              contenido: text.slice(i, i + CHUNK_SIZE),
-              chars: Math.min(CHUNK_SIZE, text.length - i)
+              contenido: chunk,
+              chars: Math.min(CHUNK_SIZE, text.length - i),
+              palabras: words,
+              tiempo_estimado_min: Math.round(words / 150 * 10) / 10
             });
           }
           return chapters;
@@ -25906,18 +26071,32 @@ var init_parsers = __esm({
         let currentTitle = "Inicio";
         let currentContent = parts[0];
         if (currentContent.trim()) {
-          chapters.push({ id: 0, titulo: currentTitle, contenido: currentContent, chars: currentContent.length });
+          const words = (currentContent.match(/\b\w+\b/g) || []).length;
+          if (words >= 30) {
+            chapters.push({
+              id: 0,
+              titulo: currentTitle,
+              contenido: currentContent,
+              chars: currentContent.length,
+              palabras: words,
+              tiempo_estimado_min: Math.round(words / 150 * 10) / 10
+            });
+          }
         }
         let idCounter = 1;
         for (let i = 1; i < parts.length; i += 2) {
           const title = parts[i];
           const content = parts[i + 1];
           if (content && content.trim()) {
+            const words = (content.match(/\b\w+\b/g) || []).length;
+            if (words < 30) continue;
             chapters.push({
               id: idCounter++,
               titulo: title.trim().substring(0, 50),
               contenido: content,
-              chars: content.length
+              chars: content.length,
+              palabras: words,
+              tiempo_estimado_min: Math.round(words / 150 * 10) / 10
             });
           }
         }
@@ -27771,6 +27950,14 @@ var require_script = __commonJS({
       const buffers = await Promise.all(blobs.map((b) => b.arrayBuffer()));
       return new Blob(buffers, { type: "audio/mpeg" });
     }
+    function cleanTextForVoice(text) {
+      if (!text) return "";
+      let cleaned = text.replace(/^[-—~•·|/]?\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d{1,5}(?:\s*(?:de|\/)\s*\d+)?\s*[-—~•·|/]?\s*$/gim, "");
+      cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+      cleaned = cleaned.replace(/[—–]/g, ", ");
+      cleaned = cleaned.replace(/[^\w\s.,;:!?¿¡'"()áéíóúüñÁÉÍÓÚÜÑ\-]/g, " ");
+      return cleaned.replace(/ +/g, " ").trim();
+    }
     var blobToBase64 = (blob) => new Promise((resolve2, reject) => {
       const reader = new FileReader();
       reader.onerror = reject;
@@ -27993,6 +28180,8 @@ var require_script = __commonJS({
               id: c.id,
               titulo: c.titulo,
               chars: c.chars,
+              palabras: c.palabras,
+              tiempo_estimado_min: c.tiempo_estimado_min,
               contenido: c.contenido
             });
           }
@@ -28019,17 +28208,21 @@ var require_script = __commonJS({
     }
     function renderChapters() {
       const list = document.getElementById("chapterList");
-      list.innerHTML = chapters.map((c) => `
+      list.innerHTML = chapters.map((c) => {
+        const palabras = c.palabras !== void 0 ? c.palabras : Math.round(c.chars / 6);
+        const tiempo = c.tiempo_estimado_min !== void 0 ? c.tiempo_estimado_min : (palabras / 150).toFixed(1);
+        return `
         <div class="chapter-item">
             <input type="checkbox" id="cap${c.globalId}" value="${c.globalId}" checked>
             <div class="chapter-info">
                 <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
                 <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
-                    ${c.fileName} \u2022 ${(c.chars / 1e3).toFixed(1)}k caracteres
+                    ${c.fileName} \u2022 ${palabras} palabras \u2022 \u23F1\uFE0F ~${tiempo} min
                 </div>
             </div>
         </div>
-    `).join("");
+        `;
+      }).join("");
       list.querySelectorAll("input").forEach((cb) => {
         cb.addEventListener("change", updateSelectedCount);
       });
@@ -28049,6 +28242,7 @@ var require_script = __commonJS({
       let processed = 0;
       const completedFiles = [];
       document.getElementById("progressStatus").textContent = "Iniciando conversi\xF3n...";
+      const startTime = Date.now();
       for (const id of selectedIds) {
         const chapter = chapters.find((c) => c.globalId === id);
         if (!chapter) continue;
@@ -28056,7 +28250,8 @@ var require_script = __commonJS({
         document.getElementById("progressStatus").textContent = `Convirtiendo: ${currentFileName} / ${chapter.titulo}`;
         document.getElementById("progressChapter").textContent = `${processed + 1}/${total}`;
         try {
-          const audioBlob = await synthesizeLongText(chapter.contenido, vozId);
+          const cleanContent = cleanTextForVoice(chapter.contenido);
+          const audioBlob = await synthesizeLongText(cleanContent, vozId);
           const base64 = await blobToBase64(audioBlob);
           const bookName = currentFileName.split(".").slice(0, -1).join(".") || currentFileName;
           const safeBookName = bookName.replace(/[^a-z0-9 \-\.]/gi, "_").trim();
@@ -28085,6 +28280,19 @@ var require_script = __commonJS({
           const pct = Math.round(processed / total * 100);
           document.getElementById("progressPercent").textContent = pct + "%";
           document.getElementById("progressBar").style.width = pct + "%";
+          const elapsed = (Date.now() - startTime) / 1e3;
+          const secPerItem = elapsed / processed;
+          const remaining = Math.ceil((total - processed) * secPerItem);
+          const etaEl2 = document.getElementById("progressEta");
+          if (etaEl2) {
+            if (remaining > 0) {
+              const m = Math.floor(remaining / 60);
+              const s2 = remaining % 60;
+              etaEl2.textContent = `\u23F1\uFE0F Restante: ~${m > 0 ? `${m}m ` : ""}${s2}s`;
+            } else {
+              etaEl2.textContent = "\u23F1\uFE0F Finalizando...";
+            }
+          }
           const cb = document.getElementById(`cap${id}`);
           if (cb) {
             cb.checked = false;
@@ -28097,6 +28305,8 @@ var require_script = __commonJS({
           alert(`Error en cap\xEDtulo ${chapter.titulo}: ${msg}`);
         }
       }
+      const etaEl = document.getElementById("progressEta");
+      if (etaEl) etaEl.textContent = "\u2705 Completado";
       renderResults(completedFiles);
       showSection("results");
     });
@@ -28284,6 +28494,8 @@ var require_script = __commonJS({
               id: c.id,
               titulo: c.titulo,
               chars: c.chars,
+              palabras: c.palabras,
+              tiempo_estimado_min: c.tiempo_estimado_min,
               contenido: c.contenido
             });
           }

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Voco</string>
+    <string name="title_activity_main">Voco</string>
+    <string name="package_name">com.audiolibros.app</string>
+    <string name="custom_url_scheme">com.audiolibros.app</string>
+</resources>

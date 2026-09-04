@@ -31,6 +31,15 @@ async function synthesizeLongText(text, voiceId) {
     return new Blob(buffers, { type: 'audio/mpeg' });
 }
 
+function cleanTextForVoice(text) {
+    if (!text) return '';
+    let cleaned = text.replace(/^[-—~•·|/]?\s*(?:p[aá]g(?:ina)?\.?|page)\s*\d{1,5}(?:\s*(?:de|\/)\s*\d+)?\s*[-—~•·|/]?\s*$/gim, '');
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    cleaned = cleaned.replace(/[—–]/g, ', ');
+    cleaned = cleaned.replace(/[^\w\s.,;:!?¿¡'"()áéíóúüñÁÉÍÓÚÜÑ\-]/g, ' ');
+    return cleaned.replace(/ +/g, ' ').trim();
+}
+
 // Helper: Convert Blob to Base64
 const blobToBase64 = (blob) => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -315,6 +324,8 @@ async function handleFiles(files) {
                     id: c.id,
                     titulo: c.titulo,
                     chars: c.chars,
+                    palabras: c.palabras,
+                    tiempo_estimado_min: c.tiempo_estimado_min,
                     contenido: c.contenido
                 });
             }
@@ -346,17 +357,21 @@ function resetDropZone() {
 
 function renderChapters() {
     const list = document.getElementById('chapterList');
-    list.innerHTML = chapters.map(c => `
+    list.innerHTML = chapters.map(c => {
+        const palabras = c.palabras !== undefined ? c.palabras : Math.round(c.chars / 6);
+        const tiempo = c.tiempo_estimado_min !== undefined ? c.tiempo_estimado_min : (palabras / 150).toFixed(1);
+        return `
         <div class="chapter-item">
             <input type="checkbox" id="cap${c.globalId}" value="${c.globalId}" checked>
             <div class="chapter-info">
                 <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
                 <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
-                    ${c.fileName} • ${(c.chars / 1000).toFixed(1)}k caracteres
+                    ${c.fileName} • ${palabras} palabras • ⏱️ ~${tiempo} min
                 </div>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 
     list.querySelectorAll('input').forEach(cb => {
         cb.addEventListener('change', updateSelectedCount);
@@ -386,6 +401,7 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
 
     document.getElementById('progressStatus').textContent = 'Iniciando conversión...';
 
+    const startTime = Date.now();
     for (const id of selectedIds) {
         const chapter = chapters.find(c => c.globalId === id);
         if (!chapter) continue;
@@ -395,8 +411,11 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
         document.getElementById('progressChapter').textContent = `${processed + 1}/${total}`;
 
         try {
+            // Clean text before speech synthesis
+            const cleanContent = cleanTextForVoice(chapter.contenido);
+
             // Synthesize (chunk long text to avoid Bing request limit)
-            const audioBlob = await synthesizeLongText(chapter.contenido, vozId);
+            const audioBlob = await synthesizeLongText(cleanContent, vozId);
 
             // Save to device
             const base64 = await blobToBase64(audioBlob);
@@ -432,6 +451,21 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
             document.getElementById('progressPercent').textContent = pct + '%';
             document.getElementById('progressBar').style.width = pct + '%';
 
+            // Calcular tiempo restante estimado (ETA)
+            const elapsed = (Date.now() - startTime) / 1000;
+            const secPerItem = elapsed / processed;
+            const remaining = Math.ceil((total - processed) * secPerItem);
+            const etaEl = document.getElementById('progressEta');
+            if (etaEl) {
+                if (remaining > 0) {
+                    const m = Math.floor(remaining / 60);
+                    const s = remaining % 60;
+                    etaEl.textContent = `⏱️ Restante: ~${m > 0 ? `${m}m ` : ''}${s}s`;
+                } else {
+                    etaEl.textContent = '⏱️ Finalizando...';
+                }
+            }
+
             // Uncheck processed
             const cb = document.getElementById(`cap${id}`);
             if (cb) {
@@ -449,6 +483,8 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     }
 
     // Finish
+    const etaEl = document.getElementById('progressEta');
+    if (etaEl) etaEl.textContent = '✅ Completado';
     renderResults(completedFiles);
     showSection('results');
 });
@@ -673,6 +709,8 @@ document.getElementById('btnReanalyze').addEventListener('click', async () => {
                     id: c.id,
                     titulo: c.titulo,
                     chars: c.chars,
+                    palabras: c.palabras,
+                    tiempo_estimado_min: c.tiempo_estimado_min,
                     contenido: c.contenido
                 });
             }
