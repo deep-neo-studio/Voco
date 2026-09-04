@@ -1,4 +1,10 @@
-# 🎧 Voco - Conversor de Livros a Audiolibros
+# 🎧 Voco - Conversor de Libros a Audiolibros
+
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Flask](https://img.shields.io/badge/Flask-Web_App-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![Edge-TTS](https://img.shields.io/badge/Edge--TTS-Neural_Voices-0078D7?style=for-the-badge)](https://github.com/rany2/edge-tts)
+[![FFmpeg](https://img.shields.io/badge/FFmpeg-Audio_Processing-007808?style=for-the-badge&logo=ffmpeg&logoColor=white)](https://ffmpeg.org/)
+[![License](https://img.shields.io/badge/License-MIT-purple?style=for-the-badge)](LICENSE)
 
 [Download APK](https://github.com/deep-neo-studio/Voco/releases/tag/v1.0.0) | [Español](#español) | [Português](#português) | [Français](#français) | [English](#english)
 

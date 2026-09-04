@@ -3,16 +3,26 @@ __pycache__/
 node_modules/
 .env
 *.pyc
+*.log
 .DS_Store
+
+# PyInstaller / Build
+build/
+dist/
+*.spec
 
 # Generated files
 output/
 uploads/
 descargas/
 samples/
+test_audio*
 
-# Android
+# Android / IDE
+.idea/
+*.iml
+.gradle/
 android/app/build/
 android/.gradle/
 android/local.properties
-
+android/.idea/

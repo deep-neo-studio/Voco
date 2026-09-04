@@ -25846,7 +25846,8 @@ var init_parsers = __esm({
         });
       }
       static async readPDF(file) {
-        GlobalWorkerOptions.workerSrc = "static/js/pdf.worker.mjs";
+        const base = (document.baseURI || window.location.href).replace(/\/[^/]*$/, "/");
+        GlobalWorkerOptions.workerSrc = base + "static/js/pdf.worker.mjs";
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await getDocument(arrayBuffer).promise;
         let fullText = "";
@@ -26435,131 +26436,645 @@ var init_dist = __esm({
   }
 });
 
-// public/static/js/edge-tts.js
-function generateUUID() {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
-    var r = Math.random() * 16 | 0, v = c == "x" ? r : r & 3 | 8;
-    return v.toString(16);
-  });
+// node_modules/edge-tts-universal/dist/browser.js
+function browserConnectId() {
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  array[6] = array[6] & 15 | 64;
+  array[8] = array[8] & 63 | 128;
+  const hex = Array.from(array, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const uuid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+  return uuid.replace(/-/g, "");
 }
+function browserEscape(text) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function browserUnescape(text) {
+  return text.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+function browserRemoveIncompatibleCharacters(text) {
+  return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ");
+}
+function browserDateToString() {
+  return (/* @__PURE__ */ new Date()).toUTCString().replace("GMT", "GMT+0000 (Coordinated Universal Time)");
+}
+function browserMkssml(voice, rate, volume, pitch, escapedText) {
+  return `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${voice}'><prosody pitch='${pitch}' rate='${rate}' volume='${volume}'>${escapedText}</prosody></voice></speak>`;
+}
+function browserSsmlHeadersPlusData(requestId, timestamp, ssml) {
+  return `X-RequestId:${requestId}\r
+Content-Type:application/ssml+xml\r
+X-Timestamp:${timestamp}Z\r
+Path:ssml\r
+\r
+${ssml}`;
+}
+function browserGetHeadersAndDataFromText(message) {
+  const messageString = new TextDecoder().decode(message);
+  const headerEndIndex = messageString.indexOf("\r\n\r\n");
+  const headers = {};
+  if (headerEndIndex !== -1) {
+    const headerString = messageString.substring(0, headerEndIndex);
+    const headerLines = headerString.split("\r\n");
+    for (const line of headerLines) {
+      const [key, value] = line.split(":", 2);
+      if (key && value) {
+        headers[key] = value.trim();
+      }
+    }
+  }
+  const headerByteLength = new TextEncoder().encode(messageString.substring(0, headerEndIndex + 4)).length;
+  return [headers, message.slice(headerByteLength)];
+}
+function browserGetHeadersAndDataFromBinary(message) {
+  if (message.length < 2) {
+    throw new Error("Message too short to contain header length");
+  }
+  const headerLength = message[0] << 8 | message[1];
+  const headers = {};
+  if (headerLength > 0 && headerLength + 2 <= message.length) {
+    const headerBytes = message.slice(2, headerLength + 2);
+    const headerString = new TextDecoder().decode(headerBytes);
+    const headerLines = headerString.split("\r\n");
+    for (const line of headerLines) {
+      const [key, value] = line.split(":", 2);
+      if (key && value) {
+        headers[key] = value.trim();
+      }
+    }
+  }
+  return [headers, message.slice(headerLength + 2)];
+}
+function browserSplitTextByByteLength(text, byteLength) {
+  return (function* () {
+    let buffer = new TextEncoder().encode(text);
+    while (buffer.length > byteLength) {
+      let splitAt = byteLength;
+      const slice = buffer.slice(0, byteLength);
+      const sliceText = new TextDecoder().decode(slice);
+      const lastNewline = sliceText.lastIndexOf("\n");
+      const lastSpace = sliceText.lastIndexOf(" ");
+      if (lastNewline > 0) {
+        splitAt = new TextEncoder().encode(sliceText.substring(0, lastNewline)).length;
+      } else if (lastSpace > 0) {
+        splitAt = new TextEncoder().encode(sliceText.substring(0, lastSpace)).length;
+      }
+      const chunk = buffer.slice(0, splitAt);
+      const chunkText = new TextDecoder().decode(chunk).trim();
+      if (chunkText) {
+        yield new TextEncoder().encode(chunkText);
+      }
+      buffer = buffer.slice(splitAt);
+    }
+    const remainingText = new TextDecoder().decode(buffer).trim();
+    if (remainingText) {
+      yield new TextEncoder().encode(remainingText);
+    }
+  })();
+}
+function concatUint8Arrays(arrays) {
+  if (arrays.length === 0) return new Uint8Array(0);
+  if (arrays.length === 1) return arrays[0];
+  const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
+  const result = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const arr of arrays) {
+    if (arr.length > 0) {
+      result.set(arr, offset);
+      offset += arr.length;
+    }
+  }
+  return result;
+}
+var EdgeTTSException, SkewAdjustmentError, UnknownResponse, UnexpectedResponse, NoAudioReceived, WebSocketError, ValueError, TTSConfig, BASE_URL, TRUSTED_CLIENT_TOKEN, WSS_URL, VOICE_LIST_URL, DEFAULT_VOICE, CHROMIUM_FULL_VERSION, CHROMIUM_MAJOR_VERSION, SEC_MS_GEC_VERSION, BASE_HEADERS, VOICE_HEADERS, WIN_EPOCH, S_TO_NS, _BrowserDRM, BrowserDRM, BrowserBuffer, BrowserCommunicate, BrowserEdgeTTS;
+var init_browser = __esm({
+  "node_modules/edge-tts-universal/dist/browser.js"() {
+    EdgeTTSException = class extends Error {
+      constructor(message) {
+        super(message);
+        this.name = "EdgeTTSException";
+      }
+    };
+    SkewAdjustmentError = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "SkewAdjustmentError";
+      }
+    };
+    UnknownResponse = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "UnknownResponse";
+      }
+    };
+    UnexpectedResponse = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "UnexpectedResponse";
+      }
+    };
+    NoAudioReceived = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "NoAudioReceived";
+      }
+    };
+    WebSocketError = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "WebSocketError";
+      }
+    };
+    ValueError = class extends EdgeTTSException {
+      constructor(message) {
+        super(message);
+        this.name = "ValueError";
+      }
+    };
+    TTSConfig = class _TTSConfig {
+      /**
+       * Creates a new TTSConfig instance with the specified parameters.
+       * 
+       * @param options - Configuration options
+       * @param options.voice - Voice name (supports both short and full formats)
+       * @param options.rate - Speech rate adjustment (default: "+0%")
+       * @param options.volume - Volume adjustment (default: "+0%") 
+       * @param options.pitch - Pitch adjustment (default: "+0Hz")
+       * @throws {ValueError} If any parameter has an invalid format
+       */
+      constructor({
+        voice,
+        rate = "+0%",
+        volume = "+0%",
+        pitch = "+0Hz"
+      }) {
+        this.voice = voice;
+        this.rate = rate;
+        this.volume = volume;
+        this.pitch = pitch;
+        this.validate();
+      }
+      validate() {
+        const match = /^([a-z]{2,})-([A-Z]{2,})-(.+Neural)$/.exec(this.voice);
+        if (match) {
+          const [, lang] = match;
+          let [, , region, name] = match;
+          if (name.includes("-")) {
+            const parts = name.split("-");
+            region += `-${parts[0]}`;
+            name = parts[1];
+          }
+          this.voice = `Microsoft Server Speech Text to Speech Voice (${lang}-${region}, ${name})`;
+        }
+        _TTSConfig.validateStringParam(
+          "voice",
+          this.voice,
+          /^Microsoft Server Speech Text to Speech Voice \(.+,.+\)$/
+        );
+        _TTSConfig.validateStringParam("rate", this.rate, /^[+-]\d+%$/);
+        _TTSConfig.validateStringParam("volume", this.volume, /^[+-]\d+%$/);
+        _TTSConfig.validateStringParam("pitch", this.pitch, /^[+-]\d+Hz$/);
+      }
+      static validateStringParam(paramName, paramValue, pattern) {
+        if (typeof paramValue !== "string") {
+          throw new TypeError(`${paramName} must be a string`);
+        }
+        if (!pattern.test(paramValue)) {
+          throw new ValueError(`Invalid ${paramName} '${paramValue}'.`);
+        }
+      }
+    };
+    BASE_URL = "speech.platform.bing.com/consumer/speech/synthesize/readaloud";
+    TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    WSS_URL = `wss://${BASE_URL}/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}`;
+    VOICE_LIST_URL = `https://${BASE_URL}/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`;
+    DEFAULT_VOICE = "en-US-EmmaMultilingualNeural";
+    CHROMIUM_FULL_VERSION = "130.0.2849.68";
+    CHROMIUM_MAJOR_VERSION = CHROMIUM_FULL_VERSION.split(".")[0];
+    SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL_VERSION}`;
+    BASE_HEADERS = {
+      "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR_VERSION}.0.0.0 Safari/537.36 Edg/${CHROMIUM_MAJOR_VERSION}.0.0.0`,
+      "Accept-Encoding": "gzip, deflate, br",
+      "Accept-Language": "en-US,en;q=0.9"
+    };
+    VOICE_HEADERS = {
+      ...BASE_HEADERS,
+      "Authority": "speech.platform.bing.com",
+      "Sec-CH-UA": `" Not;A Brand";v="99", "Microsoft Edge";v="${CHROMIUM_MAJOR_VERSION}", "Chromium";v="${CHROMIUM_MAJOR_VERSION}"`,
+      "Sec-CH-UA-Mobile": "?0",
+      "Accept": "*/*",
+      "Sec-Fetch-Site": "none",
+      "Sec-Fetch-Mode": "cors",
+      "Sec-Fetch-Dest": "empty"
+    };
+    WIN_EPOCH = 11644473600;
+    S_TO_NS = 1e9;
+    _BrowserDRM = class _BrowserDRM2 {
+      static adjClockSkewSeconds(skewSeconds) {
+        _BrowserDRM2.clockSkewSeconds += skewSeconds;
+      }
+      static getUnixTimestamp() {
+        return Date.now() / 1e3 + _BrowserDRM2.clockSkewSeconds;
+      }
+      static parseRfc2616Date(date) {
+        try {
+          return new Date(date).getTime() / 1e3;
+        } catch (e) {
+          return null;
+        }
+      }
+      static handleClientResponseError(response) {
+        if (!response.headers) {
+          throw new SkewAdjustmentError("No headers in response.");
+        }
+        const serverDate = response.headers["date"] || response.headers["Date"];
+        if (!serverDate) {
+          throw new SkewAdjustmentError("No server date in headers.");
+        }
+        const serverDateParsed = _BrowserDRM2.parseRfc2616Date(serverDate);
+        if (serverDateParsed === null) {
+          throw new SkewAdjustmentError(`Failed to parse server date: ${serverDate}`);
+        }
+        const clientDate = _BrowserDRM2.getUnixTimestamp();
+        _BrowserDRM2.adjClockSkewSeconds(serverDateParsed - clientDate);
+      }
+      static async generateSecMsGec() {
+        let ticks = _BrowserDRM2.getUnixTimestamp();
+        ticks += WIN_EPOCH;
+        ticks -= ticks % 300;
+        ticks *= S_TO_NS / 100;
+        const strToHash = `${ticks.toFixed(0)}${TRUSTED_CLIENT_TOKEN}`;
+        const encoder = new TextEncoder();
+        const data = encoder.encode(strToHash);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+      }
+    };
+    _BrowserDRM.clockSkewSeconds = 0;
+    BrowserDRM = _BrowserDRM;
+    BrowserBuffer = class {
+      static from(input, encoding) {
+        if (typeof input === "string") {
+          return new TextEncoder().encode(input);
+        } else if (input instanceof ArrayBuffer) {
+          return new Uint8Array(input);
+        } else if (input instanceof Uint8Array) {
+          return input;
+        }
+        throw new Error("Unsupported input type for BrowserBuffer.from");
+      }
+      static concat(arrays) {
+        const totalLength = arrays.reduce((sum, arr) => sum + arr.length, 0);
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const arr of arrays) {
+          result.set(arr, offset);
+          offset += arr.length;
+        }
+        return result;
+      }
+    };
+    BrowserCommunicate = class {
+      /**
+       * Creates a new browser Communicate instance for text-to-speech synthesis.
+       * 
+       * @param text - The text to synthesize
+       * @param options - Configuration options for synthesis
+       */
+      constructor(text, options = {}) {
+        this.state = {
+          partialText: BrowserBuffer.from(""),
+          offsetCompensation: 0,
+          lastDurationOffset: 0,
+          streamWasCalled: false
+        };
+        this.ttsConfig = new TTSConfig({
+          voice: options.voice || DEFAULT_VOICE,
+          rate: options.rate,
+          volume: options.volume,
+          pitch: options.pitch
+        });
+        if (typeof text !== "string") {
+          throw new TypeError("text must be a string");
+        }
+        this.texts = browserSplitTextByByteLength(
+          browserEscape(browserRemoveIncompatibleCharacters(text)),
+          // browserCalcMaxMesgSize(this.ttsConfig.voice, this.ttsConfig.rate, this.ttsConfig.volume, this.ttsConfig.pitch),
+          4096
+        );
+        this.connectionTimeout = options.connectionTimeout;
+      }
+      parseMetadata(data) {
+        const metadata = JSON.parse(new TextDecoder().decode(data));
+        for (const metaObj of metadata["Metadata"]) {
+          const metaType = metaObj["Type"];
+          if (metaType === "WordBoundary") {
+            const currentOffset = metaObj["Data"]["Offset"] + this.state.offsetCompensation;
+            const currentDuration = metaObj["Data"]["Duration"];
+            return {
+              type: metaType,
+              offset: currentOffset,
+              duration: currentDuration,
+              text: browserUnescape(metaObj["Data"]["text"]["Text"])
+            };
+          }
+          if (metaType === "SessionEnd") {
+            continue;
+          }
+          throw new UnknownResponse(`Unknown metadata type: ${metaType}`);
+        }
+        throw new UnexpectedResponse("No WordBoundary metadata found");
+      }
+      async *_stream() {
+        const url = `${WSS_URL}&Sec-MS-GEC=${await BrowserDRM.generateSecMsGec()}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${browserConnectId()}`;
+        const websocket = new WebSocket(url);
+        const messageQueue = [];
+        let resolveMessage = null;
+        let timeoutId;
+        if (this.connectionTimeout) {
+          timeoutId = window.setTimeout(() => {
+            websocket.close();
+            messageQueue.push(new WebSocketError("Connection timeout"));
+            if (resolveMessage) resolveMessage();
+          }, this.connectionTimeout);
+        }
+        websocket.onmessage = (event) => {
+          if (timeoutId) {
+            window.clearTimeout(timeoutId);
+            timeoutId = void 0;
+          }
+          const data = event.data;
+          if (typeof data === "string") {
+            const [headers, parsedData] = browserGetHeadersAndDataFromText(BrowserBuffer.from(data));
+            const path = headers["Path"];
+            if (path === "audio.metadata") {
+              try {
+                const parsedMetadata = this.parseMetadata(parsedData);
+                this.state.lastDurationOffset = parsedMetadata.offset + parsedMetadata.duration;
+                messageQueue.push(parsedMetadata);
+              } catch (e) {
+                messageQueue.push(e);
+              }
+            } else if (path === "turn.end") {
+              this.state.offsetCompensation = this.state.lastDurationOffset;
+              websocket.close();
+            } else if (path !== "response" && path !== "turn.start") {
+              messageQueue.push(new UnknownResponse(`Unknown path received: ${path}`));
+            }
+          } else if (data instanceof ArrayBuffer) {
+            const bufferData = BrowserBuffer.from(data);
+            if (bufferData.length < 2) {
+              messageQueue.push(new UnexpectedResponse("We received a binary message, but it is missing the header length."));
+            } else {
+              const [headers, audioData] = browserGetHeadersAndDataFromBinary(bufferData);
+              if (headers["Path"] !== "audio") {
+                messageQueue.push(new UnexpectedResponse("Received binary message, but the path is not audio."));
+              } else {
+                const contentType = headers["Content-Type"];
+                if (contentType !== "audio/mpeg") {
+                  if (audioData.length > 0) {
+                    messageQueue.push(new UnexpectedResponse("Received binary message, but with an unexpected Content-Type."));
+                  }
+                } else if (audioData.length === 0) {
+                  messageQueue.push(new UnexpectedResponse("Received binary message, but it is missing the audio data."));
+                } else {
+                  messageQueue.push({ type: "audio", data: audioData });
+                }
+              }
+            }
+          } else if (data instanceof Blob) {
+            data.arrayBuffer().then((arrayBuffer) => {
+              const bufferData = BrowserBuffer.from(arrayBuffer);
+              if (bufferData.length < 2) {
+                messageQueue.push(new UnexpectedResponse("We received a binary message, but it is missing the header length."));
+              } else {
+                const [headers, audioData] = browserGetHeadersAndDataFromBinary(bufferData);
+                if (headers["Path"] !== "audio") {
+                  messageQueue.push(new UnexpectedResponse("Received binary message, but the path is not audio."));
+                } else {
+                  const contentType = headers["Content-Type"];
+                  if (contentType !== "audio/mpeg") {
+                    if (audioData.length > 0) {
+                      messageQueue.push(new UnexpectedResponse("Received binary message, but with an unexpected Content-Type."));
+                    }
+                  } else if (audioData.length === 0) {
+                    messageQueue.push(new UnexpectedResponse("Received binary message, but it is missing the audio data."));
+                  } else {
+                    messageQueue.push({ type: "audio", data: audioData });
+                  }
+                }
+              }
+              if (resolveMessage) resolveMessage();
+            });
+          }
+          if (resolveMessage) resolveMessage();
+        };
+        websocket.onerror = (error) => {
+          if (timeoutId) {
+            window.clearTimeout(timeoutId);
+            timeoutId = void 0;
+          }
+          messageQueue.push(new WebSocketError("WebSocket error occurred"));
+          if (resolveMessage) resolveMessage();
+        };
+        websocket.onclose = () => {
+          if (timeoutId) {
+            window.clearTimeout(timeoutId);
+            timeoutId = void 0;
+          }
+          messageQueue.push("close");
+          if (resolveMessage) resolveMessage();
+        };
+        await new Promise((resolve2, reject) => {
+          websocket.onopen = () => {
+            if (timeoutId) {
+              window.clearTimeout(timeoutId);
+              timeoutId = void 0;
+            }
+            resolve2();
+          };
+          if (this.connectionTimeout) {
+            setTimeout(() => {
+              if (websocket.readyState === WebSocket.CONNECTING) {
+                websocket.close();
+                reject(new WebSocketError("Connection timeout"));
+              }
+            }, this.connectionTimeout);
+          }
+        });
+        websocket.send(
+          `X-Timestamp:${browserDateToString()}\r
+Content-Type:application/json; charset=utf-8\r
+Path:speech.config\r
+\r
+{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"true"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}\r
+`
+        );
+        websocket.send(
+          browserSsmlHeadersPlusData(
+            browserConnectId(),
+            browserDateToString(),
+            browserMkssml(this.ttsConfig.voice, this.ttsConfig.rate, this.ttsConfig.volume, this.ttsConfig.pitch, new TextDecoder().decode(this.state.partialText))
+          )
+        );
+        let audioWasReceived = false;
+        while (true) {
+          if (messageQueue.length > 0) {
+            const message = messageQueue.shift();
+            if (message === "close") {
+              if (!audioWasReceived) {
+                throw new NoAudioReceived("No audio was received.");
+              }
+              break;
+            } else if (message instanceof Error) {
+              throw message;
+            } else {
+              if (message.type === "audio") audioWasReceived = true;
+              yield message;
+            }
+          } else {
+            await new Promise((resolve2) => {
+              resolveMessage = resolve2;
+              setTimeout(resolve2, 50);
+            });
+          }
+        }
+      }
+      /**
+       * Streams text-to-speech synthesis results using native browser WebSocket.
+       * Uses only browser-native APIs, avoiding Node.js dependencies.
+       * 
+       * @yields BrowserTTSChunk - Audio data or word boundary information
+       * @throws {Error} If called more than once
+       * @throws {NoAudioReceived} If no audio data is received
+       * @throws {WebSocketError} If WebSocket connection fails
+       */
+      async *stream() {
+        if (this.state.streamWasCalled) {
+          throw new Error("stream can only be called once.");
+        }
+        this.state.streamWasCalled = true;
+        for (const partialText of this.texts) {
+          this.state.partialText = partialText;
+          for await (const message of this._stream()) {
+            yield message;
+          }
+        }
+      }
+    };
+    BrowserEdgeTTS = class {
+      /**
+       * @param text The text to be synthesized.
+       * @param voice The voice to use for synthesis.
+       * @param options Prosody options (rate, volume, pitch).
+       */
+      constructor(text, voice = "Microsoft Server Speech Text to Speech Voice (en-US, EmmaMultilingualNeural)", options = {}) {
+        this.text = text;
+        this.voice = voice;
+        this.rate = options.rate || "+0%";
+        this.volume = options.volume || "+0%";
+        this.pitch = options.pitch || "+0Hz";
+      }
+      /**
+       * Initiates the synthesis process using browser-native APIs.
+       * @returns A promise that resolves with the synthesized audio and subtitle data.
+       */
+      async synthesize() {
+        const communicate = new BrowserCommunicate(this.text, {
+          voice: this.voice,
+          rate: this.rate,
+          volume: this.volume,
+          pitch: this.pitch
+        });
+        const audioChunks = [];
+        const wordBoundaries = [];
+        for await (const chunk of communicate.stream()) {
+          if (chunk.type === "audio" && chunk.data) {
+            audioChunks.push(chunk.data);
+          } else if (chunk.type === "WordBoundary" && chunk.offset !== void 0 && chunk.duration !== void 0 && chunk.text !== void 0) {
+            wordBoundaries.push({
+              offset: chunk.offset,
+              duration: chunk.duration,
+              text: chunk.text
+            });
+          }
+        }
+        const audioBuffer = concatUint8Arrays(audioChunks);
+        const audioBlob = new Blob([
+          audioBuffer
+        ], { type: "audio/mpeg" });
+        return {
+          audio: audioBlob,
+          subtitle: wordBoundaries
+        };
+      }
+    };
+  }
+});
+
+// public/static/js/edge-tts.js
 var EdgeTTS;
 var init_edge_tts = __esm({
   "public/static/js/edge-tts.js"() {
     init_dist();
+    init_browser();
     EdgeTTS = class {
       constructor() {
-        this.ws = null;
         this.voice = "es-MX-JorgeNeural";
         this.rate = "+0%";
         this.volume = "+0%";
         this.pitch = "+0Hz";
       }
       async connect() {
-        return new Promise((resolve2, reject) => {
-          const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-          const connectionId = generateUUID().replace(/-/g, "");
-          const url = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&ConnectionId=${connectionId}`;
-          try {
-            this.ws = new WebSocket(url);
-          } catch (e) {
-            reject(e);
-            return;
-          }
-          this.ws.binaryType = "arraybuffer";
-          this.ws.onopen = () => {
-            const config = {
-              context: {
-                synthesis: {
-                  audio: {
-                    metadataoptions: {
-                      sentenceBoundaryEnabled: "false",
-                      wordBoundaryEnabled: "false"
-                    },
-                    outputFormat: "audio-24khz-48kbitrate-mono-mp3"
-                  }
-                }
-              }
-            };
-            const msg = `X-Timestamp:${(/* @__PURE__ */ new Date()).toString()}\r
-Content-Type:application/json; charset=utf-8\r
-Path:speech.config\r
-\r
-${JSON.stringify(config)}`;
-            this.ws.send(msg);
-            console.log("EdgeTTS Connected");
-            resolve2();
-          };
-          this.ws.onerror = (e) => {
-            console.error("EdgeTTS WebSocket Error:", e);
-            reject(e);
-          };
-          this.ws.onclose = () => {
-            console.log("EdgeTTS Closed");
-          };
-        });
+        return Promise.resolve();
       }
       async synthesize(text, voiceId) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-          await this.connect();
-        }
-        return new Promise((resolve2, reject) => {
-          const requestId = generateUUID().replace(/-/g, "");
-          let audioParts = [];
-          const handleMessage = (event) => {
-            const data = event.data;
-            if (typeof data === "string") {
-              if (data.includes("Path:turn.end")) {
-                this.ws.removeEventListener("message", handleMessage);
-                const blob = new Blob(audioParts, { type: "audio/mpeg" });
-                resolve2(blob);
-              }
-            } else if (data instanceof ArrayBuffer) {
-              const view = new DataView(data);
-              const headSize = view.getUint16(0);
-              const audioData = data.slice(2 + headSize);
-              audioParts.push(audioData);
+        return new Promise(async (resolve2, reject) => {
+          try {
+            console.log("Synthesizing with edge-tts-universal (browser mode):", voiceId || this.voice);
+            const tts = new BrowserEdgeTTS({
+              voice: voiceId || this.voice,
+              rate: this.rate,
+              volume: this.volume,
+              pitch: this.pitch
+            });
+            const audioData = await tts.synthesize(text);
+            if (!audioData || audioData.byteLength === 0) {
+              throw new Error("No audio data received");
             }
-          };
-          this.ws.addEventListener("message", handleMessage);
-          const ssml = `
-                <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>
-                    <voice name='${voiceId}'>
-                        <prosody pitch='${this.pitch}' rate='${this.rate}' volume='${this.volume}'>
-                            ${text}
-                        </prosody>
-                    </voice>
-                </speak>
-            `;
-          const request = `X-RequestId:${requestId}\r
-Content-Type:application/ssml+xml\r
-Path:ssml\r
-\r
-${ssml}`;
-          this.ws.send(request);
+            const blob = new Blob([audioData], { type: "audio/mpeg" });
+            resolve2(blob);
+          } catch (e) {
+            console.error("Detailed TTS Rejection:", e);
+            reject(e);
+          }
         });
       }
       close() {
-        if (this.ws) this.ws.close();
       }
       static async getVoices() {
-        const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-        const url = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`;
+        const TRUSTED_CLIENT_TOKEN2 = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+        const url = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN2}`;
         try {
-          const response = await CapacitorHttp.get({ url });
+          console.log("Fetching voices via CapacitorHttp...");
+          const response = await CapacitorHttp.get({
+            url,
+            headers: {
+              "Authority": "speech.platform.bing.com",
+              "Accept": "*/*",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"
+            }
+          });
           if (response.status !== 200) {
-            throw new Error(`Status ${response.status}`);
+            throw new Error(`HTTP ${response.status}`);
           }
-          return response.data;
+          let data = response.data;
+          if (typeof data === "string") data = JSON.parse(data);
+          return data;
         } catch (e) {
-          console.error("Error fetching voices with CapacitorHttp:", e);
-          try {
-            console.log("Falling back to standard fetch...");
-            const response = await fetch(url);
-            return await response.json();
-          } catch (err) {
-            console.error("Error fetching voices (fallback):", err);
-            return [];
-          }
+          console.error("Error fetching voices:", e);
+          return [];
         }
       }
     };
@@ -27233,6 +27748,29 @@ var require_script = __commonJS({
     init_parsers();
     init_edge_tts();
     init_esm();
+    var TTS_CHUNK_MAX = 2500;
+    async function synthesizeLongText(text, voiceId) {
+      const trimmed = text.trim();
+      if (!trimmed) return new Blob([], { type: "audio/mpeg" });
+      if (trimmed.length <= TTS_CHUNK_MAX) return await ttsClient.synthesize(trimmed, voiceId);
+      const chunks = [];
+      let start = 0;
+      while (start < trimmed.length) {
+        let end = Math.min(start + TTS_CHUNK_MAX, trimmed.length);
+        if (end < trimmed.length) {
+          const lastSpace = trimmed.lastIndexOf(" ", end);
+          if (lastSpace > start) end = lastSpace + 1;
+        }
+        chunks.push(trimmed.slice(start, end).trim());
+        start = end;
+      }
+      const blobs = [];
+      for (const chunk of chunks) {
+        if (chunk.length) blobs.push(await ttsClient.synthesize(chunk, voiceId));
+      }
+      const buffers = await Promise.all(blobs.map((b) => b.arrayBuffer()));
+      return new Blob(buffers, { type: "audio/mpeg" });
+    }
     var blobToBase64 = (blob) => new Promise((resolve2, reject) => {
       const reader = new FileReader();
       reader.onerror = reject;
@@ -27243,9 +27781,9 @@ var require_script = __commonJS({
       };
       reader.readAsDataURL(blob);
     });
-    var currentFile = null;
-    var currentFileId = null;
+    var currentFiles = [];
     var chapters = [];
+    var globalChapterId = 0;
     var currentAudio = null;
     var allLanguages = [];
     var currentVoices = [];
@@ -27284,10 +27822,20 @@ var require_script = __commonJS({
         if (!voices || voices.length === 0) throw new Error("No voices found");
         const map = {};
         voices.forEach((v) => {
-          const langCode = v.Locale.split("-")[0];
-          const localeCode = v.Locale;
-          const regionName = v.LocaleName;
-          let langName = regionName.split("(")[0].trim();
+          const langCode = v.Locale ? v.Locale.split("-")[0] : "und";
+          const localeCode = v.Locale || "und";
+          let regionName = localeCode;
+          if (v.FriendlyName && v.FriendlyName.includes(" - ")) {
+            regionName = v.FriendlyName.split(" - ").pop().trim();
+          } else if (v.LocaleName) {
+            regionName = v.LocaleName;
+          }
+          let langName = langCode;
+          if (regionName.includes("(")) {
+            langName = regionName.split("(")[0].trim();
+          } else {
+            langName = regionName;
+          }
           if (!map[langCode]) {
             map[langCode] = { codigo: langCode, nombre: langName, locales: {} };
           }
@@ -27315,7 +27863,7 @@ var require_script = __commonJS({
         populateLangSelect();
       } catch (e) {
         console.error("Error loading voices", e);
-        voiceGrid.innerHTML = '<div class="voice-loading">Error cargando voces. Verifica tu conexi\xF3n.</div>';
+        voiceGrid.innerHTML = `<div class="voice-loading" style="color:#ff6b6b">Error cargando voces: ${e.message || "Verifica tu conexi\xF3n"}</div>`;
       }
     }
     function populateLangSelect() {
@@ -27418,21 +27966,47 @@ var require_script = __commonJS({
     }
     dropZone.addEventListener("click", () => fileInput.click());
     fileInput.addEventListener("change", (e) => {
-      if (e.target.files[0]) handleFile(e.target.files[0]);
+      if (e.target.files && e.target.files.length > 0) {
+        handleFiles(Array.from(e.target.files));
+      }
     });
-    async function handleFile(file) {
+    async function handleFiles(files) {
       dropZone.innerHTML = '<span class="drop-icon">\u23F3</span><p class="drop-text">Analizando...</p>';
       try {
-        const text = await LocalParser.readFile(file);
-        chapters = LocalParser.splitChapters(text);
-        currentFile = file;
-        currentFileId = file.name;
-        document.getElementById("fileName").textContent = file.name;
+        currentFiles = [];
+        chapters = [];
+        globalChapterId = 0;
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const text = await LocalParser.readFile(file);
+          currentFiles.push({
+            file,
+            fullText: text,
+            name: file.name
+          });
+          const fileChapters = LocalParser.splitChapters(text);
+          for (const c of fileChapters) {
+            chapters.push({
+              globalId: globalChapterId++,
+              fileIndex: i,
+              fileName: file.name,
+              id: c.id,
+              titulo: c.titulo,
+              chars: c.chars,
+              contenido: c.contenido
+            });
+          }
+        }
+        if (currentFiles.length === 1) {
+          document.getElementById("fileName").textContent = currentFiles[0].name;
+        } else {
+          document.getElementById("fileName").textContent = `${currentFiles.length} archivos seleccionados`;
+        }
         renderChapters();
         showSection("select");
       } catch (e) {
         console.error(e);
-        alert("Error al leer archivo: " + e.message);
+        alert("Error al leer archivos: " + e.message);
         resetDropZone();
       }
     }
@@ -27447,10 +28021,12 @@ var require_script = __commonJS({
       const list = document.getElementById("chapterList");
       list.innerHTML = chapters.map((c) => `
         <div class="chapter-item">
-            <input type="checkbox" id="cap${c.id}" value="${c.id}" checked>
+            <input type="checkbox" id="cap${c.globalId}" value="${c.globalId}" checked>
             <div class="chapter-info">
-                <div class="chapter-title">${c.titulo}</div>
-                <div class="chapter-chars">${(c.chars / 1e3).toFixed(1)}k caracteres</div>
+                <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
+                <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
+                    ${c.fileName} \u2022 ${(c.chars / 1e3).toFixed(1)}k caracteres
+                </div>
             </div>
         </div>
     `).join("");
@@ -27474,24 +28050,36 @@ var require_script = __commonJS({
       const completedFiles = [];
       document.getElementById("progressStatus").textContent = "Iniciando conversi\xF3n...";
       for (const id of selectedIds) {
-        const chapter = chapters.find((c) => c.id === id);
+        const chapter = chapters.find((c) => c.globalId === id);
         if (!chapter) continue;
-        document.getElementById("progressStatus").textContent = `Convirtiendo: ${chapter.titulo}`;
+        const currentFileName = chapter.fileName;
+        document.getElementById("progressStatus").textContent = `Convirtiendo: ${currentFileName} / ${chapter.titulo}`;
         document.getElementById("progressChapter").textContent = `${processed + 1}/${total}`;
         try {
-          const audioBlob = await ttsClient.synthesize(chapter.contenido, vozId);
+          const audioBlob = await synthesizeLongText(chapter.contenido, vozId);
           const base64 = await blobToBase64(audioBlob);
-          const fileName = `${currentFile.name.split(".")[0]} - ${chapter.titulo}.mp3`.replace(/[^a-z0-9 \-\.]/gi, "_");
+          const bookName = currentFileName.split(".").slice(0, -1).join(".") || currentFileName;
+          const safeBookName = bookName.replace(/[^a-z0-9 \-\.]/gi, "_").trim();
+          const fileName = `${safeBookName} - ${chapter.titulo}.mp3`.replace(/[^a-z0-9 \-\.]/gi, "_");
+          const bookFolderPath = `Audiolibros/${safeBookName}`;
+          try {
+            await Filesystem.mkdir({
+              path: bookFolderPath,
+              directory: Directory.Documents,
+              recursive: true
+            });
+          } catch (e) {
+          }
           const savedFile = await Filesystem.writeFile({
-            path: `Audiolibros/${fileName}`,
+            path: `${bookFolderPath}/${fileName}`,
             data: base64,
-            directory: Directory.Documents,
-            recursive: true
+            directory: Directory.Documents
           });
           completedFiles.push({
             nombre: fileName,
             uri: savedFile.uri,
-            size: audioBlob.size
+            size: audioBlob.size,
+            folder: bookFolderPath
           });
           processed++;
           const pct = Math.round(processed / total * 100);
@@ -27504,7 +28092,9 @@ var require_script = __commonJS({
           }
         } catch (e) {
           console.error("Error converting chapter", id, e);
-          alert(`Error en cap\xEDtulo ${chapter.titulo}: ${e.message}`);
+          let msg = e && e.message ? e.message : typeof e === "object" ? JSON.stringify(e) : String(e);
+          if (msg === "{}" && e instanceof Event) msg = "Connection error";
+          alert(`Error en cap\xEDtulo ${chapter.titulo}: ${msg}`);
         }
       }
       renderResults(completedFiles);
@@ -27525,6 +28115,7 @@ var require_script = __commonJS({
       document.getElementById("results-header-text").textContent = `\xA1${files.length} Cap\xEDtulos Completados!`;
     }
     document.getElementById("btnNewConversion").addEventListener("click", () => {
+      currentFiles = [];
       resetDropZone();
       showSection("upload");
       fileInput.value = "";
@@ -27549,13 +28140,10 @@ var require_script = __commonJS({
       updateSelectedCount();
     });
     document.getElementById("btnChangeFile").addEventListener("click", () => {
+      currentFiles = [];
       resetDropZone();
       showSection("upload");
       fileInput.value = "";
-    });
-    document.getElementById("btnReanalyze").addEventListener("click", () => {
-      const sep = document.getElementById("customDivider").value;
-      const text = LocalParser.readFile(currentFile);
     });
     var UI_TRANSLATIONS = {
       pt: {
@@ -27674,15 +28262,32 @@ var require_script = __commonJS({
       });
     }
     document.getElementById("btnReanalyze").addEventListener("click", async () => {
-      if (!currentFile) return;
+      if (currentFiles.length === 0) return;
       const separator = document.getElementById("customDivider").value;
       const btn = document.getElementById("btnReanalyze");
       const hint = document.getElementById("dividerHint");
       btn.disabled = true;
       btn.textContent = "\u23F3 Analizando...";
       try {
-        const text = await LocalParser.readFile(currentFile);
-        chapters = LocalParser.splitChapters(text, separator);
+        chapters = [];
+        globalChapterId = 0;
+        for (let i = 0; i < currentFiles.length; i++) {
+          const fileObj = currentFiles[i];
+          const text = fileObj.fullText != null ? fileObj.fullText : await LocalParser.readFile(fileObj.file);
+          if (fileObj.fullText == null) fileObj.fullText = text;
+          const fileChapters = LocalParser.splitChapters(text, separator);
+          for (const c of fileChapters) {
+            chapters.push({
+              globalId: globalChapterId++,
+              fileIndex: i,
+              fileName: fileObj.name,
+              id: c.id,
+              titulo: c.titulo,
+              chars: c.chars,
+              contenido: c.contenido
+            });
+          }
+        }
         renderChapters();
         hint.textContent = separator ? `\u2705 Dividido con "${separator}" \u2192 ${chapters.length} partes` : `\u2705 Divisi\xF3n autom\xE1tica \u2192 ${chapters.length} cap\xEDtulos`;
         hint.style.color = "#51cf66";

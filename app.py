@@ -28,7 +28,7 @@ app = Flask(__name__)
 CORS(app)
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max
 app.config['UPLOAD_FOLDER'] = Path(__file__).parent / 'uploads'
-app.config['OUTPUT_FOLDER'] = Path(__file__).parent / 'output'
+app.config['OUTPUT_FOLDER'] = Path.home() / 'Descargas' / 'Audiolibros'
 
 # Crear carpetas necesarias
 app.config['UPLOAD_FOLDER'].mkdir(exist_ok=True)
@@ -270,8 +270,8 @@ async def texto_a_audio(texto, archivo, voz):
     await communicate.save(archivo)
 
 
-def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida, nombre_libro):
-    """Procesa solo los capítulos seleccionados con pausas preventivas."""
+def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida_base, nombre_base):
+    """Procesa solo los capítulos seleccionados con pausas preventivas y genera subcarpetas por libro."""
     import time
     
     CAPS_ANTES_PAUSA = 15  # Pausar cada 15 capítulos
@@ -288,7 +288,14 @@ def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida, nomb
         
         for idx, cap in enumerate(capitulos_seleccionados, 1):
             conversiones[job_id]['actual'] = idx
-            conversiones[job_id]['capitulo'] = cap['titulo']
+            
+            # Subcarpeta por nombre de archivo original
+            nombre_archivo_cap = cap.get('archivo_nombre', nombre_base)
+            nombre_libro = Path(nombre_archivo_cap).stem
+            # Limpiar nombre de libro para carpeta
+            nombre_libro_limpio = re.sub(r'[^\w\s\-\.]', '_', nombre_libro).strip()
+            
+            conversiones[job_id]['capitulo'] = f"{nombre_libro_limpio} / {cap['titulo']}"
             
             # Pausa preventiva cada 15 capítulos para evitar rate limiting
             if idx > 1 and (idx - 1) % CAPS_ANTES_PAUSA == 0:
@@ -304,8 +311,15 @@ def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida, nomb
                 conversiones[job_id]['completados'].append(cap['id'])
                 continue
             
+            # Crear subcarpeta si son múltiples. Si es uno, asume la base.
+            carpeta_destino = carpeta_salida_base / nombre_libro_limpio
+            carpeta_destino.mkdir(parents=True, exist_ok=True)
+            
             # Nombre: libro_capitulo_X.mp3
-            archivo_salida = carpeta_salida / f"{nombre_libro}_{cap['titulo'].lower().replace(' ', '_')}.mp3"
+            titulo_limpio = cap['titulo'].lower().replace(' ', '_')
+            titulo_limpio = re.sub(r'[^\w\s\-\.]', '_', titulo_limpio)
+            archivo_salida = carpeta_destino / f"{nombre_libro_limpio}_{titulo_limpio}.mp3"
+            
             loop.run_until_complete(texto_a_audio(contenido_limpio, str(archivo_salida), voz_id))
             
             # Marcar como completado
@@ -313,7 +327,7 @@ def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida, nomb
         
         loop.close()
         conversiones[job_id]['estado'] = 'completado'
-        conversiones[job_id]['carpeta'] = str(carpeta_salida)
+        conversiones[job_id]['carpeta'] = str(carpeta_salida_base)
         
     except Exception as e:
         conversiones[job_id]['estado'] = 'error'
@@ -361,36 +375,75 @@ def voces_por_locale(locale):
 
 @app.route('/analizar', methods=['POST'])
 def analizar():
-    """Analiza el archivo y devuelve la lista de capítulos."""
-    if 'archivo' not in request.files:
-        return jsonify({'error': 'No se envió archivo'}), 400
+    """Analiza múltiples archivos y devuelve la lista de capítulos combinada."""
+    archivos = request.files.getlist('archivo')
+    if not archivos or all(a.filename == '' for a in archivos):
+        return jsonify({'error': 'No se enviaron archivos válidos'}), 400
     
-    archivo = request.files['archivo']
-    if archivo.filename == '':
-        return jsonify({'error': 'Archivo vacío'}), 400
+    for archivo in archivos:
+        if not archivo_permitido(archivo.filename):
+            return jsonify({'error': f'Archivo no permitido: {archivo.filename}. Solo .txt, .pdf o .epub'}), 400
     
-    if not archivo_permitido(archivo.filename):
-        return jsonify({'error': 'Solo archivos .txt, .pdf o .epub'}), 400
+    group_id = str(uuid.uuid4())[:8] # Un ID de grupo virtual (el frontend asume file_id)
+    nombres_seguros = []
     
-    # Guardar archivo temporalmente
-    file_id = str(uuid.uuid4())[:8]
-    nombre_seguro = secure_filename(archivo.filename)
-    ruta_archivo = app.config['UPLOAD_FOLDER'] / f"{file_id}_{nombre_seguro}"
-    archivo.save(str(ruta_archivo))
-    
+    todos_capitulos = []
+    # Usaremos global_ids para no repetir id en frontend
+    global_id_counter = 0
+
     try:
-        texto = leer_archivo(ruta_archivo)
-        capitulos = dividir_por_capitulos(texto)
-        
-        # Guardar para uso posterior
-        archivos_analizados[file_id] = {
-            'ruta': str(ruta_archivo),
-            'nombre': nombre_seguro,
-            'texto': texto,
-            'capitulos': capitulos
+        # Analizar todos y crear el grupo de capítulos
+        # Se usará group_id como file_id en el dict 'archivos_analizados'
+        archivos_analizados[group_id] = {
+            'archivos': [], # [{'nombre': ..., 'ruta': ...}]
+            'texto': '', # texto concatenado si se re-analiza todo junto (o separado, ver luego)
+            'capitulos': [] # Lista real a guardar
         }
         
-        return _respuesta_capitulos(file_id, nombre_seguro, capitulos)
+        texto_total = ""
+
+        for archivo in archivos:
+            nombre_seguro = secure_filename(archivo.filename)
+            nombres_seguros.append(nombre_seguro)
+            
+            ruta_archivo = app.config['UPLOAD_FOLDER'] / f"{group_id}_{nombre_seguro}"
+            archivo.save(str(ruta_archivo))
+            
+            texto = leer_archivo(ruta_archivo)
+            texto_total += texto + "\n\n"
+            
+            capitulos_archivo = dividir_por_capitulos(texto)
+            for c in capitulos_archivo:
+                if isinstance(c, dict):
+                    todos_capitulos.append({
+                        'id': global_id_counter,
+                        'original_id': c['id'], # para reanálisis si fuera necesario
+                        'titulo': c['titulo'],
+                        'chars': c['chars'],
+                        'contenido': c['contenido'],
+                        'archivo_nombre': nombre_seguro
+                    })
+                else: 
+                     todos_capitulos.append({
+                        'id': global_id_counter,
+                        'original_id': 0,
+                        'titulo': c[0],
+                        'chars': len(c[1]),
+                        'contenido': c[1],
+                        'archivo_nombre': nombre_seguro
+                    })
+                global_id_counter += 1
+            
+            archivos_analizados[group_id]['archivos'].append({
+                'nombre': nombre_seguro,
+                'ruta': str(ruta_archivo)
+            })
+
+        archivos_analizados[group_id]['texto'] = texto_total
+        archivos_analizados[group_id]['capitulos'] = todos_capitulos
+        
+        nombre_display = nombres_seguros[0] if len(nombres_seguros) == 1 else f"{len(nombres_seguros)} archivos seleccionados"
+        return _respuesta_capitulos(group_id, nombre_display, todos_capitulos)
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -431,13 +484,15 @@ def _respuesta_capitulos(file_id, nombre, capitulos):
             caps_info.append({
                 'id': cap['id'],
                 'titulo': cap['titulo'],
-                'chars': cap['chars']
+                'chars': cap['chars'],
+                'archivo_nombre': cap.get('archivo_nombre', nombre)
             })
         else:
             caps_info.append({
                 'id': 0,
                 'titulo': cap[0],
-                'chars': len(cap[1])
+                'chars': len(cap[1]),
+                'archivo_nombre': nombre
             })
     
     return jsonify({
@@ -477,18 +532,33 @@ def convertir():
     # Filtrar capítulos seleccionados
     todos_caps = archivo_info['capitulos']
     if capitulos_ids:
-        capitulos_seleccionados = [c for c in todos_caps if isinstance(c, dict) and c['id'] in capitulos_ids]
+        # Filter by ID (only for dict chapters that have IDs)
+        capitulos_seleccionados = []
+        for c in todos_caps:
+            if isinstance(c, dict) and c['id'] in capitulos_ids:
+                capitulos_seleccionados.append(c)
     else:
-        capitulos_seleccionados = [c for c in todos_caps if isinstance(c, dict)]
+        # Select all
+        capitulos_seleccionados = todos_caps
     
     if not capitulos_seleccionados:
         return jsonify({'error': 'No hay capítulos para convertir'}), 400
     
+    # Intentar sacar 'nombre' (ya que ahora se guardan por capítulo)
+    # Por defecto sacaremos el nombre base del primer capítulo analizado o un grupo generico
+    if capitulos_seleccionados and 'archivo_nombre' in capitulos_seleccionados[0]:
+        nombre_original = capitulos_seleccionados[0]['archivo_nombre']
+    elif archivo_info.get('archivos'):
+        nombre_original = archivo_info['archivos'][0]['nombre']
+    else:
+        nombre_original = "Audiolibro"
+        
+    nombre_base = Path(nombre_original).stem
+    
     # Crear job
     job_id = str(uuid.uuid4())[:8]
-    nombre_base = Path(archivo_info['nombre']).stem
-    carpeta_salida = app.config['OUTPUT_FOLDER'] / f"{job_id}_{nombre_base}"
-    carpeta_salida.mkdir(exist_ok=True)
+    carpeta_salida = app.config['OUTPUT_FOLDER'] / nombre_base
+    carpeta_salida.mkdir(parents=True, exist_ok=True)
     
     conversiones[job_id] = {
         'estado': 'iniciando',
@@ -523,13 +593,14 @@ def listar_descargas(job_id):
     if not carpeta:
         return jsonify({'archivos': []})
     
-    archivos = sorted(Path(carpeta).glob('*.mp3'))
+    archivos = sorted(Path(carpeta).rglob('*.mp3'))
+    # Return path relative to base directory for downloading
     return jsonify({
-        'archivos': [{'nombre': f.name, 'size': f.stat().st_size} for f in archivos]
+        'archivos': [{'nombre': str(f.relative_to(Path(carpeta))), 'size': f.stat().st_size} for f in archivos]
     })
 
 
-@app.route('/descargar/<job_id>/<nombre>')
+@app.route('/descargar/<job_id>/<path:nombre>')
 def descargar(job_id, nombre):
     if job_id not in conversiones:
         return "No encontrado", 404

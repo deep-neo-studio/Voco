@@ -1,16 +1,8 @@
 import { CapacitorHttp } from '@capacitor/core';
-
-// Helper for UUID
-function generateUUID() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
-}
+import { EdgeTTS as UniversalEdgeTTS } from 'edge-tts-universal/browser';
 
 export class EdgeTTS {
     constructor() {
-        this.ws = null;
         this.voice = 'es-MX-JorgeNeural';
         this.rate = '+0%';
         this.volume = '+0%';
@@ -18,99 +10,37 @@ export class EdgeTTS {
     }
 
     async connect() {
-        return new Promise((resolve, reject) => {
-            const TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-            const connectionId = generateUUID().replace(/-/g, '');
-            const url = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}&ConnectionId=${connectionId}`;
-
-            try {
-                this.ws = new WebSocket(url);
-            } catch (e) {
-                reject(e);
-                return;
-            }
-
-            this.ws.binaryType = 'arraybuffer';
-
-            this.ws.onopen = () => {
-                const config = {
-                    context: {
-                        synthesis: {
-                            audio: {
-                                metadataoptions: {
-                                    sentenceBoundaryEnabled: "false",
-                                    wordBoundaryEnabled: "false"
-                                },
-                                outputFormat: "audio-24khz-48kbitrate-mono-mp3"
-                            }
-                        }
-                    }
-                };
-                const msg = `X-Timestamp:${new Date().toString()}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${JSON.stringify(config)}`;
-                this.ws.send(msg);
-                console.log("EdgeTTS Connected");
-                resolve();
-            };
-
-            this.ws.onerror = (e) => {
-                console.error("EdgeTTS WebSocket Error:", e);
-                reject(e);
-            };
-
-            this.ws.onclose = () => {
-                console.log("EdgeTTS Closed");
-            };
-        });
+        return Promise.resolve();
     }
 
     async synthesize(text, voiceId) {
-        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            await this.connect();
-        }
+        return new Promise(async (resolve, reject) => {
+            try {
+                console.log("Synthesizing with edge-tts-universal (browser mode):", voiceId || this.voice);
 
-        return new Promise((resolve, reject) => {
-            const requestId = generateUUID().replace(/-/g, '');
-            let audioParts = [];
+                // We use a fresh instance to ensure the latest token
+                const tts = new UniversalEdgeTTS({
+                    voice: voiceId || this.voice,
+                    rate: this.rate,
+                    volume: this.volume,
+                    pitch: this.pitch
+                });
 
-            const handleMessage = (event) => {
-                const data = event.data;
-
-                if (typeof data === 'string') {
-                    if (data.includes('Path:turn.end')) {
-                        // End of turn
-                        this.ws.removeEventListener('message', handleMessage);
-                        const blob = new Blob(audioParts, { type: 'audio/mpeg' });
-                        resolve(blob);
-                    }
-                } else if (data instanceof ArrayBuffer) {
-                    // Binary data
-                    const view = new DataView(data);
-                    const headSize = view.getUint16(0);
-                    // Skip header (2 bytes size + headSize)
-                    const audioData = data.slice(2 + headSize);
-                    audioParts.push(audioData);
+                // Get audio as blob
+                const audioData = await tts.synthesize(text);
+                if (!audioData || audioData.byteLength === 0) {
+                    throw new Error("No audio data received");
                 }
-            };
-
-            this.ws.addEventListener('message', handleMessage);
-
-            const ssml = `
-                <speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>
-                    <voice name='${voiceId}'>
-                        <prosody pitch='${this.pitch}' rate='${this.rate}' volume='${this.volume}'>
-                            ${text}
-                        </prosody>
-                    </voice>
-                </speak>
-            `;
-
-            const request = `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
-            this.ws.send(request);
+                const blob = new Blob([audioData], { type: 'audio/mpeg' });
+                resolve(blob);
+            } catch (e) {
+                console.error("Detailed TTS Rejection:", e);
+                reject(e);
+            }
         });
     }
 
     close() {
-        if (this.ws) this.ws.close();
     }
 
     static async getVoices() {
@@ -118,26 +48,26 @@ export class EdgeTTS {
         const url = `https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=${TRUSTED_CLIENT_TOKEN}`;
 
         try {
-            // Use CapacitorHttp to bypass CORS
-            const response = await CapacitorHttp.get({ url });
+            console.log("Fetching voices via CapacitorHttp...");
+            const response = await CapacitorHttp.get({
+                url: url,
+                headers: {
+                    'Authority': 'speech.platform.bing.com',
+                    'Accept': '*/*',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0'
+                }
+            });
 
             if (response.status !== 200) {
-                throw new Error(`Status ${response.status}`);
+                throw new Error(`HTTP ${response.status}`);
             }
 
-            return response.data;
+            let data = response.data;
+            if (typeof data === 'string') data = JSON.parse(data);
+            return data;
         } catch (e) {
-            console.error("Error fetching voices with CapacitorHttp:", e);
-
-            // Fallback to fetch for web/dev
-            try {
-                console.log("Falling back to standard fetch...");
-                const response = await fetch(url);
-                return await response.json();
-            } catch (err) {
-                console.error("Error fetching voices (fallback):", err);
-                return [];
-            }
+            console.error("Error fetching voices:", e);
+            return [];
         }
     }
 }

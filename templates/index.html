@@ -917,7 +917,7 @@
                     <span class="drop-icon">📚</span>
                     <p class="drop-text" data-i18n="drop_text">Arrastra tu libro aquí</p>
                     <p class="drop-hint" data-i18n="drop_hint">o haz clic para seleccionar • TXT, PDF, EPUB</p>
-                    <input type="file" class="file-input" id="fileInput" accept=".txt,.pdf,.epub">
+                    <input type="file" class="file-input" id="fileInput" accept=".txt,.pdf,.epub" multiple>
                 </div>
             </div>
 
@@ -1261,15 +1261,22 @@
         dropZone.addEventListener('drop', (e) => {
             e.preventDefault();
             dropZone.classList.remove('drag-over');
-            if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+            if (e.dataTransfer.files.length > 0) handleFiles(e.dataTransfer.files);
         });
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files[0]) handleFile(e.target.files[0]);
+            if (e.target.files.length > 0) handleFiles(e.target.files);
         });
 
-        async function handleFile(file) {
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (!['txt', 'pdf', 'epub'].includes(ext)) {
+        async function handleFiles(files) {
+            let validFiles = [];
+            for (let i = 0; i < files.length; i++) {
+                const ext = files[i].name.split('.').pop().toLowerCase();
+                if (['txt', 'pdf', 'epub'].includes(ext)) {
+                    validFiles.push(files[i]);
+                }
+            }
+
+            if (validFiles.length === 0) {
                 alert('Solo archivos TXT, PDF o EPUB');
                 return;
             }
@@ -1277,7 +1284,9 @@
             dropZone.innerHTML = '<span class="drop-icon">⏳</span><p class="drop-text">Analizando...</p>';
 
             const formData = new FormData();
-            formData.append('archivo', file);
+            for (let file of validFiles) {
+                formData.append('archivo', file);
+            }
 
             try {
                 const res = await fetch(getUrl('/analizar'), { method: 'POST', body: formData });
@@ -1296,7 +1305,7 @@
                 showSection('select');
 
             } catch (err) {
-                alert('Error al procesar archivo');
+                alert('Error al procesar archivos');
                 resetDropZone();
             }
         }
@@ -1315,8 +1324,10 @@
                 <div class="chapter-item">
                     <input type="checkbox" id="cap${c.id}" value="${c.id}" checked>
                     <div class="chapter-info">
-                        <div class="chapter-title">${c.titulo}</div>
-                        <div class="chapter-chars">${(c.chars / 1000).toFixed(1)}k caracteres</div>
+                        <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
+                        <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
+                            ${c.archivo_nombre} • ${(c.chars / 1000).toFixed(1)}k caracteres
+                        </div>
                     </div>
                 </div>
             `).join('');

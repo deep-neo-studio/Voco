@@ -36,7 +36,7 @@ body {
 .container {
     max-width: 800px;
     margin: 0 auto;
-    padding: 40px 20px;
+    padding: calc(40px + env(safe-area-inset-top)) 20px calc(40px + env(safe-area-inset-bottom));
 }
 
 header {
@@ -688,7 +688,7 @@ h1 {
 /* Settings Button */
 .settings-btn {
     position: absolute;
-    top: 20px;
+    top: calc(20px + env(safe-area-inset-top));
     right: 20px;
     background: rgba(255, 255, 255, 0.1);
     border: none;

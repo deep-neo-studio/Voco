@@ -27,8 +27,9 @@ export class LocalParser {
     }
 
     static async readPDF(file) {
-        // Set worker
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'static/js/pdf.worker.mjs';
+        // Worker URL must be absolute for Capacitor/Android (file:// / capacitor://)
+        const base = (document.baseURI || window.location.href).replace(/\/[^/]*$/, '/');
+        pdfjsLib.GlobalWorkerOptions.workerSrc = base + 'static/js/pdf.worker.mjs';
 
         const arrayBuffer = await file.arrayBuffer();
         const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;

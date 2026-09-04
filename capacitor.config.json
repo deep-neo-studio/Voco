@@ -6,5 +6,12 @@
     "CapacitorHttp": {
       "enabled": true
     }
+  },
+  "server": {
+    "hostname": "www.bing.com",
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*"
+    ]
   }
 }

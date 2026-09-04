@@ -2,6 +2,35 @@ import { LocalParser } from './parsers.js';
 import { EdgeTTS } from './edge-tts.js';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 
+// Max characters per TTS request (Bing/Edge can reject very long SSML)
+const TTS_CHUNK_MAX = 2500;
+
+/** Splits text into chunks at word boundaries, then synthesizes each and merges MP3 blobs. */
+async function synthesizeLongText(text, voiceId) {
+    const trimmed = text.trim();
+    if (!trimmed) return new Blob([], { type: 'audio/mpeg' });
+    if (trimmed.length <= TTS_CHUNK_MAX) return await ttsClient.synthesize(trimmed, voiceId);
+
+    const chunks = [];
+    let start = 0;
+    while (start < trimmed.length) {
+        let end = Math.min(start + TTS_CHUNK_MAX, trimmed.length);
+        if (end < trimmed.length) {
+            const lastSpace = trimmed.lastIndexOf(' ', end);
+            if (lastSpace > start) end = lastSpace + 1;
+        }
+        chunks.push(trimmed.slice(start, end).trim());
+        start = end;
+    }
+
+    const blobs = [];
+    for (const chunk of chunks) {
+        if (chunk.length) blobs.push(await ttsClient.synthesize(chunk, voiceId));
+    }
+    const buffers = await Promise.all(blobs.map(b => b.arrayBuffer()));
+    return new Blob(buffers, { type: 'audio/mpeg' });
+}
+
 // Helper: Convert Blob to Base64
 const blobToBase64 = (blob) => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -16,9 +45,9 @@ const blobToBase64 = (blob) => new Promise((resolve, reject) => {
 });
 
 // State
-let currentFile = null;
-let currentFileId = null; // We use filename as ID
-let chapters = [];
+let currentFiles = []; // Array de { file, fullText, name }
+let chapters = []; // Array de { globalId, fileIndex, fileName, id, titulo, chars, contenido }
+let globalChapterId = 0;
 let currentAudio = null;
 let allLanguages = [];
 let currentVoices = [];
@@ -73,12 +102,22 @@ async function loadLanguagesAndVoices() {
         // Process voices into languages/locales structure similar to Python backend
         const map = {};
         voices.forEach(v => {
-            const langCode = v.Locale.split('-')[0];
-            const localeCode = v.Locale;
-            const regionName = v.LocaleName; // e.g. "Spanish (Mexico)"
+            const langCode = v.Locale ? v.Locale.split('-')[0] : 'und';
+            const localeCode = v.Locale || 'und';
 
-            // Get language name (e.g. "Spanish")
-            let langName = regionName.split('(')[0].trim();
+            let regionName = localeCode;
+            if (v.FriendlyName && v.FriendlyName.includes(' - ')) {
+                regionName = v.FriendlyName.split(' - ').pop().trim();
+            } else if (v.LocaleName) {
+                regionName = v.LocaleName;
+            }
+
+            let langName = langCode;
+            if (regionName.includes('(')) {
+                langName = regionName.split('(')[0].trim();
+            } else {
+                langName = regionName;
+            }
 
             if (!map[langCode]) {
                 map[langCode] = { codigo: langCode, nombre: langName, locales: {} };
@@ -114,7 +153,7 @@ async function loadLanguagesAndVoices() {
     } catch (e) {
         console.error("Error loading voices", e);
         // Fallback or error UI
-        voiceGrid.innerHTML = '<div class="voice-loading">Error cargando voces. Verifica tu conexión.</div>';
+        voiceGrid.innerHTML = `<div class="voice-loading" style="color:#ff6b6b">Error cargando voces: ${e.message || "Verifica tu conexión"}</div>`;
     }
 }
 
@@ -241,27 +280,58 @@ async function playPreview(voiceId, btn) {
 
 // 2. Handle File Upload
 dropZone.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+fileInput.addEventListener('change', (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+        handleFiles(Array.from(e.target.files));
+    }
+});
 
-async function handleFile(file) {
+async function handleFiles(files) {
     dropZone.innerHTML = '<span class="drop-icon">⏳</span><p class="drop-text">Analizando...</p>';
 
     try {
-        const text = await LocalParser.readFile(file);
+        currentFiles = [];
+        chapters = [];
+        globalChapterId = 0;
 
-        // Simple chapter splitting logic
-        chapters = LocalParser.splitChapters(text);
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const text = await LocalParser.readFile(file);
 
-        currentFile = file;
-        currentFileId = file.name;
-        document.getElementById('fileName').textContent = file.name;
+            currentFiles.push({
+                file: file,
+                fullText: text,
+                name: file.name
+            });
+
+            // Simple chapter splitting logic
+            const fileChapters = LocalParser.splitChapters(text);
+
+            for (const c of fileChapters) {
+                chapters.push({
+                    globalId: globalChapterId++,
+                    fileIndex: i,
+                    fileName: file.name,
+                    id: c.id,
+                    titulo: c.titulo,
+                    chars: c.chars,
+                    contenido: c.contenido
+                });
+            }
+        }
+
+        if (currentFiles.length === 1) {
+            document.getElementById('fileName').textContent = currentFiles[0].name;
+        } else {
+            document.getElementById('fileName').textContent = `${currentFiles.length} archivos seleccionados`;
+        }
 
         renderChapters();
         showSection('select');
 
     } catch (e) {
         console.error(e);
-        alert('Error al leer archivo: ' + e.message);
+        alert('Error al leer archivos: ' + e.message);
         resetDropZone();
     }
 }
@@ -278,10 +348,12 @@ function renderChapters() {
     const list = document.getElementById('chapterList');
     list.innerHTML = chapters.map(c => `
         <div class="chapter-item">
-            <input type="checkbox" id="cap${c.id}" value="${c.id}" checked>
+            <input type="checkbox" id="cap${c.globalId}" value="${c.globalId}" checked>
             <div class="chapter-info">
-                <div class="chapter-title">${c.titulo}</div>
-                <div class="chapter-chars">${(c.chars / 1000).toFixed(1)}k caracteres</div>
+                <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
+                <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
+                    ${c.fileName} • ${(c.chars / 1000).toFixed(1)}k caracteres
+                </div>
             </div>
         </div>
     `).join('');
@@ -315,32 +387,44 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
     document.getElementById('progressStatus').textContent = 'Iniciando conversión...';
 
     for (const id of selectedIds) {
-        const chapter = chapters.find(c => c.id === id);
+        const chapter = chapters.find(c => c.globalId === id);
         if (!chapter) continue;
 
-        document.getElementById('progressStatus').textContent = `Convirtiendo: ${chapter.titulo}`;
+        const currentFileName = chapter.fileName;
+        document.getElementById('progressStatus').textContent = `Convirtiendo: ${currentFileName} / ${chapter.titulo}`;
         document.getElementById('progressChapter').textContent = `${processed + 1}/${total}`;
 
         try {
-            // Synthesize
-            const audioBlob = await ttsClient.synthesize(chapter.contenido, vozId);
+            // Synthesize (chunk long text to avoid Bing request limit)
+            const audioBlob = await synthesizeLongText(chapter.contenido, vozId);
 
             // Save to device
             const base64 = await blobToBase64(audioBlob);
-            const fileName = `${currentFile.name.split('.')[0]} - ${chapter.titulo}.mp3`.replace(/[^a-z0-9 \-\.]/gi, '_');
+            const bookName = currentFileName.split('.').slice(0, -1).join('.') || currentFileName;
+            const safeBookName = bookName.replace(/[^a-z0-9 \-\.]/gi, '_').trim();
+            const fileName = `${safeBookName} - ${chapter.titulo}.mp3`.replace(/[^a-z0-9 \-\.]/gi, '_');
 
             // Use Documents folder
+            const bookFolderPath = `Audiolibros/${safeBookName}`;
+            try {
+                await Filesystem.mkdir({
+                    path: bookFolderPath,
+                    directory: Directory.Documents,
+                    recursive: true
+                });
+            } catch (e) { } // ignore if already exists
+
             const savedFile = await Filesystem.writeFile({
-                path: `Audiolibros/${fileName}`,
+                path: `${bookFolderPath}/${fileName}`,
                 data: base64,
-                directory: Directory.Documents,
-                recursive: true
+                directory: Directory.Documents
             });
 
             completedFiles.push({
                 nombre: fileName,
                 uri: savedFile.uri,
-                size: audioBlob.size
+                size: audioBlob.size,
+                folder: bookFolderPath
             });
 
             processed++;
@@ -357,8 +441,10 @@ document.getElementById('btnConvert').addEventListener('click', async () => {
 
         } catch (e) {
             console.error("Error converting chapter", id, e);
-            alert(`Error en capítulo ${chapter.titulo}: ${e.message}`);
-            // Continue or break? Continue.
+            let msg = e && e.message ? e.message : (typeof e === 'object' ? JSON.stringify(e) : String(e));
+            if (msg === '{}' && e instanceof Event) msg = "Connection error";
+            alert(`Error en capítulo ${chapter.titulo}: ${msg}`);
+            // Continue with other chapters
         }
     }
 
@@ -384,6 +470,7 @@ function renderResults(files) {
 }
 
 document.getElementById('btnNewConversion').addEventListener('click', () => {
+    currentFiles = [];
     resetDropZone();
     showSection('upload');
     fileInput.value = '';
@@ -414,16 +501,10 @@ document.getElementById('btnSelectNone').addEventListener('click', () => {
     updateSelectedCount();
 });
 document.getElementById('btnChangeFile').addEventListener('click', () => {
+    currentFiles = [];
     resetDropZone();
     showSection('upload');
     fileInput.value = '';
-});
-// Reanalyze button logic (needs implementation in parsers.js or script.js)
-document.getElementById('btnReanalyze').addEventListener('click', () => {
-    const sep = document.getElementById('customDivider').value;
-    // ... logic to re-split text ...
-    const text = LocalParser.readFile(currentFile); // Wait, we can't read file again easily if we didn't store text.
-    // Better store fullText in memory.
 });
 
 // --- i18n & Utility Logic ---
@@ -559,9 +640,9 @@ function applyI18n(lang) {
     });
 }
 
-// Re-analyze Logic
+// Re-analyze Logic (uses cached currentFullText when available — Android may not re-read File)
 document.getElementById('btnReanalyze').addEventListener('click', async () => {
-    if (!currentFile) return;
+    if (currentFiles.length === 0) return;
 
     const separator = document.getElementById('customDivider').value;
     const btn = document.getElementById('btnReanalyze');
@@ -571,11 +652,32 @@ document.getElementById('btnReanalyze').addEventListener('click', async () => {
     btn.textContent = '⏳ Analizando...';
 
     try {
-        // Read file again or use cached text? 
-        // We need to verify if we can read the file object again. Yes, Blob/File can be read multiple times.
-        const text = await LocalParser.readFile(currentFile);
+        chapters = [];
+        globalChapterId = 0;
 
-        chapters = LocalParser.splitChapters(text, separator);
+        for (let i = 0; i < currentFiles.length; i++) {
+            const fileObj = currentFiles[i];
+            const text = fileObj.fullText != null
+                ? fileObj.fullText
+                : await LocalParser.readFile(fileObj.file);
+
+            if (fileObj.fullText == null) fileObj.fullText = text;
+
+            const fileChapters = LocalParser.splitChapters(text, separator);
+
+            for (const c of fileChapters) {
+                chapters.push({
+                    globalId: globalChapterId++,
+                    fileIndex: i,
+                    fileName: fileObj.name,
+                    id: c.id,
+                    titulo: c.titulo,
+                    chars: c.chars,
+                    contenido: c.contenido
+                });
+            }
+        }
+
         renderChapters();
 
         hint.textContent = separator
