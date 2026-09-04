@@ -17,6 +17,7 @@ uploads/
 descargas/
 samples/
 test_audio*
+.audio_cache/
 
 # Android / IDE
 .idea/

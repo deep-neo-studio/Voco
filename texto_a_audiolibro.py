@@ -97,13 +97,18 @@ def dividir_por_capitulos(texto: str) -> list[tuple[str, str]]:
         
         contenido = texto[inicio:fin].strip()
         
+        # Omitir capítulos con menos de 30 palabras (títulos vacíos, índices, dedicatorias)
+        palabras = len(re.findall(r'\b\w+\b', contenido))
+        if palabras < 30:
+            continue
+        
         # Limpiar el nombre para usarlo como archivo
         nombre_limpio = re.sub(r'[^\w\s]', '', nombre)
         nombre_limpio = nombre_limpio.replace(' ', '_').lower()
         
         capitulos.append((nombre_limpio, contenido))
     
-    print(f"📚 Encontrados {len(capitulos)} capítulos")
+    print(f"📚 Encontrados {len(capitulos)} capítulos válidos")
     return capitulos
 
 

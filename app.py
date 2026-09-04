@@ -11,6 +11,8 @@ import os
 import re
 import subprocess
 import threading
+import hashlib
+import shutil
 import uuid
 from pathlib import Path
 
@@ -33,6 +35,13 @@ app.config['OUTPUT_FOLDER'] = Path.home() / 'Descargas' / 'Audiolibros'
 # Crear carpetas necesarias
 app.config['UPLOAD_FOLDER'].mkdir(exist_ok=True)
 app.config['OUTPUT_FOLDER'].mkdir(exist_ok=True)
+
+# Caché de audio y configuración de rendimiento
+CACHE_DIR = Path(__file__).parent / '.audio_cache'
+CACHE_DIR.mkdir(exist_ok=True)
+MAX_CONCURRENT = 5      # Conversiones TTS en paralelo
+MAX_BLOCK_CHARS = 4000  # Dividir capítulos largos en bloques de este tamaño
+MAX_RETRIES = 3         # Reintentos con backoff exponencial
 
 # Estado de las conversiones y archivos analizados
 conversiones = {}
@@ -158,6 +167,17 @@ def _obtener_voces_edge():
 EXTENSIONES_PERMITIDAS = {'txt', 'pdf', 'epub'}
 
 
+def obtener_nombre_seguro(filename):
+    """Genera un nombre de archivo seguro soportando caracteres no ASCII y acentos."""
+    nombre = secure_filename(filename)
+    if not nombre or nombre.startswith('.'):
+        stem = Path(filename).stem
+        ext = Path(filename).suffix.lower()
+        limpio = re.sub(r'[^\w\s\-\.]', '_', stem).strip()
+        nombre = f"{limpio}{ext}" if limpio else f"archivo_{uuid.uuid4().hex[:6]}{ext}"
+    return nombre
+
+
 def archivo_permitido(nombre):
     return '.' in nombre and nombre.rsplit('.', 1)[1].lower() in EXTENSIONES_PERMITIDAS
 
@@ -226,34 +246,50 @@ def dividir_por_capitulos(texto, separador_custom=None):
         chunk_size = 5000
         for i in range(0, len(texto_limpio), chunk_size):
             chunk = texto_limpio[i:i+chunk_size]
-            chunks.append((f"parte_{(i//chunk_size)+1:03d}", chunk))
+            palabras = len(re.findall(r'\b\w+\b', chunk))
+            if palabras < 30:
+                continue
+            chunks.append((f"parte_{(len(chunks))+1:03d}", chunk))
         return chunks if chunks else [("completo", texto)]
     
     capitulos = []
+    idx = 0
     for i, match in enumerate(matches):
         nombre_original = match.group(1).strip()
         inicio = match.end()
         fin = matches[i + 1].start() if i + 1 < len(matches) else len(texto)
         contenido = texto[inicio:fin].strip()
+        
+        # Omitir capítulos vacíos o muy cortos (< 30 palabras: índices, portadas, dedicatorias o títulos sueltos)
+        palabras = len(re.findall(r'\b\w+\b', contenido))
+        if palabras < 30:
+            continue
+        
         nombre_limpio = re.sub(r'[^\w\s]', '', nombre_original).replace(' ', '_').lower()
         
         # Extraer número del capítulo para mostrar bonito
         num_match = re.search(r'\d+', nombre_original)
-        num_cap = num_match.group() if num_match else str(i+1)
+        num_cap = num_match.group() if num_match else str(idx + 1)
         
         # Título legible
         if separador_custom:
-            titulo = f"Parte {i+1}"
+            titulo = f"Parte {idx + 1}"
         else:
             titulo = f"Capítulo {num_cap}"
         
+        # Estimación de tiempo de audio (locución estándar ~150 palabras por minuto)
+        tiempo_estimado_min = round(palabras / 150, 1)
+        
         capitulos.append({
-            'id': i,
-            'nombre': nombre_limpio if nombre_limpio else f'parte_{i+1}',
+            'id': idx,
+            'nombre': nombre_limpio if nombre_limpio else f'parte_{idx+1}',
             'titulo': titulo,
             'chars': len(contenido),
+            'palabras': palabras,
+            'tiempo_estimado_min': tiempo_estimado_min,
             'contenido': contenido
         })
+        idx += 1
     
     return capitulos
 
@@ -270,65 +306,152 @@ async def texto_a_audio(texto, archivo, voz):
     await communicate.save(archivo)
 
 
+def _cache_key(texto, voz_id):
+    """Genera clave de caché basada en contenido y voz."""
+    return hashlib.md5(f"{texto}|{voz_id}".encode()).hexdigest()
+
+
+def dividir_en_bloques(texto, max_chars=None):
+    """Divide texto largo en bloques cortando en límites de oraciones."""
+    if max_chars is None:
+        max_chars = MAX_BLOCK_CHARS
+    if len(texto) <= max_chars:
+        return [texto]
+
+    bloques = []
+    inicio = 0
+    while inicio < len(texto):
+        fin = min(inicio + max_chars, len(texto))
+        if fin < len(texto):
+            # Buscar límite de oración para cortar limpiamente
+            for sep in ['. ', '.\n', '? ', '! ', ';\n', '\n\n', ', ']:
+                last_sep = texto.rfind(sep, inicio + (max_chars // 2), fin)
+                if last_sep > inicio:
+                    fin = last_sep + len(sep)
+                    break
+        bloques.append(texto[inicio:fin])
+        inicio = fin
+    return bloques
+
+
+async def _texto_a_audio_retry(texto, archivo, voz, max_intentos=None):
+    """Convierte texto a audio con reintentos y backoff exponencial."""
+    if max_intentos is None:
+        max_intentos = MAX_RETRIES
+    for intento in range(max_intentos):
+        try:
+            communicate = edge_tts.Communicate(texto, voz)
+            await communicate.save(archivo)
+            return
+        except Exception:
+            if intento < max_intentos - 1:
+                wait_time = 2 ** (intento + 1)  # 2s, 4s, 8s
+                await asyncio.sleep(wait_time)
+            else:
+                raise
+
+
+async def _convertir_capitulo(cap, voz_id, carpeta_salida_base, nombre_base, job_id, semaphore):
+    """Convierte un capítulo individual con control de concurrencia y caché."""
+    async with semaphore:
+        nombre_archivo_cap = cap.get('archivo_nombre', nombre_base)
+        nombre_libro = Path(nombre_archivo_cap).stem
+        nombre_libro_limpio = re.sub(r'[^\w\s\-\.]', '_', nombre_libro).strip()
+
+        conversiones[job_id]['capitulo'] = f"{nombre_libro_limpio} / {cap['titulo']}"
+
+        contenido_limpio = limpiar_texto(cap['contenido'])
+        if len(contenido_limpio) < 50:
+            conversiones[job_id]['completados'].append(cap['id'])
+            conversiones[job_id]['actual'] = len(conversiones[job_id]['completados'])
+            return
+
+        # Verificar caché
+        cache_key = _cache_key(contenido_limpio, voz_id)
+        cache_file = CACHE_DIR / f"{cache_key}.mp3"
+
+        carpeta_destino = carpeta_salida_base / nombre_libro_limpio
+        carpeta_destino.mkdir(parents=True, exist_ok=True)
+
+        titulo_limpio = cap['titulo'].lower().replace(' ', '_')
+        titulo_limpio = re.sub(r'[^\w\s\-\.]', '_', titulo_limpio)
+        archivo_salida = carpeta_destino / f"{nombre_libro_limpio}_{titulo_limpio}.mp3"
+
+        if cache_file.exists():
+            # Usar versión cacheada (instantáneo)
+            shutil.copy2(str(cache_file), str(archivo_salida))
+        else:
+            # Dividir en bloques si es muy largo para edge-tts
+            bloques = dividir_en_bloques(contenido_limpio)
+
+            if len(bloques) == 1:
+                await _texto_a_audio_retry(contenido_limpio, str(archivo_salida), voz_id)
+            else:
+                # Convertir bloques secuencialmente y concatenar
+                temp_files = []
+                try:
+                    for i, bloque in enumerate(bloques):
+                        temp_file = carpeta_destino / f".tmp_{cap['id']}_{i}.mp3"
+                        temp_files.append(temp_file)
+                        await _texto_a_audio_retry(bloque, str(temp_file), voz_id)
+
+                    # Concatenar MP3 (los frames MP3 son independientes)
+                    with open(str(archivo_salida), 'wb') as outfile:
+                        for tf in temp_files:
+                            with open(str(tf), 'rb') as infile:
+                                outfile.write(infile.read())
+                finally:
+                    for tf in temp_files:
+                        try:
+                            tf.unlink()
+                        except Exception:
+                            pass
+
+            # Guardar en caché para futuras conversiones
+            try:
+                shutil.copy2(str(archivo_salida), str(cache_file))
+            except Exception:
+                pass
+
+        # Actualizar progreso
+        conversiones[job_id]['completados'].append(cap['id'])
+        conversiones[job_id]['actual'] = len(conversiones[job_id]['completados'])
+
+
 def procesar_libro(job_id, capitulos_seleccionados, voz_id, carpeta_salida_base, nombre_base):
-    """Procesa solo los capítulos seleccionados con pausas preventivas y genera subcarpetas por libro."""
-    import time
-    
-    CAPS_ANTES_PAUSA = 15  # Pausar cada 15 capítulos
-    DURACION_PAUSA = 90   # Segundos de pausa (1.5 minutos)
-    
+    """Procesa capítulos con conversión paralela, reintentos inteligentes y caché."""
     try:
         total = len(capitulos_seleccionados)
         conversiones[job_id]['total'] = total
         conversiones[job_id]['estado'] = 'convirtiendo'
-        conversiones[job_id]['completados'] = []  # IDs de capítulos ya convertidos
-        
+        conversiones[job_id]['completados'] = []
+
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
-        for idx, cap in enumerate(capitulos_seleccionados, 1):
-            conversiones[job_id]['actual'] = idx
-            
-            # Subcarpeta por nombre de archivo original
-            nombre_archivo_cap = cap.get('archivo_nombre', nombre_base)
-            nombre_libro = Path(nombre_archivo_cap).stem
-            # Limpiar nombre de libro para carpeta
-            nombre_libro_limpio = re.sub(r'[^\w\s\-\.]', '_', nombre_libro).strip()
-            
-            conversiones[job_id]['capitulo'] = f"{nombre_libro_limpio} / {cap['titulo']}"
-            
-            # Pausa preventiva cada 15 capítulos para evitar rate limiting
-            if idx > 1 and (idx - 1) % CAPS_ANTES_PAUSA == 0:
-                conversiones[job_id]['estado'] = 'pausando'
-                conversiones[job_id]['pausa_restante'] = DURACION_PAUSA
-                for seg in range(DURACION_PAUSA, 0, -1):
-                    conversiones[job_id]['pausa_restante'] = seg
-                    time.sleep(1)
-                conversiones[job_id]['estado'] = 'convirtiendo'
-            
-            contenido_limpio = limpiar_texto(cap['contenido'])
-            if len(contenido_limpio) < 50:
-                conversiones[job_id]['completados'].append(cap['id'])
-                continue
-            
-            # Crear subcarpeta si son múltiples. Si es uno, asume la base.
-            carpeta_destino = carpeta_salida_base / nombre_libro_limpio
-            carpeta_destino.mkdir(parents=True, exist_ok=True)
-            
-            # Nombre: libro_capitulo_X.mp3
-            titulo_limpio = cap['titulo'].lower().replace(' ', '_')
-            titulo_limpio = re.sub(r'[^\w\s\-\.]', '_', titulo_limpio)
-            archivo_salida = carpeta_destino / f"{nombre_libro_limpio}_{titulo_limpio}.mp3"
-            
-            loop.run_until_complete(texto_a_audio(contenido_limpio, str(archivo_salida), voz_id))
-            
-            # Marcar como completado
-            conversiones[job_id]['completados'].append(cap['id'])
-        
+
+        async def _procesar_todos():
+            semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+            tasks = [
+                asyncio.create_task(
+                    _convertir_capitulo(cap, voz_id, carpeta_salida_base, nombre_base, job_id, semaphore)
+                )
+                for cap in capitulos_seleccionados
+            ]
+            # return_exceptions=True para no abortar todo si falla un capítulo
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            errores = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    errores.append(f"{capitulos_seleccionados[i].get('titulo', i)}: {result}")
+            if errores:
+                conversiones[job_id]['errores_parciales'] = errores
+
+        loop.run_until_complete(_procesar_todos())
         loop.close()
+
         conversiones[job_id]['estado'] = 'completado'
         conversiones[job_id]['carpeta'] = str(carpeta_salida_base)
-        
+
     except Exception as e:
         conversiones[job_id]['estado'] = 'error'
         conversiones[job_id]['error'] = str(e)
@@ -375,7 +498,7 @@ def voces_por_locale(locale):
 
 @app.route('/analizar', methods=['POST'])
 def analizar():
-    """Analiza múltiples archivos y devuelve la lista de capítulos combinada."""
+    """Analiza múltiples archivos o tomos y devuelve la lista de capítulos combinada sin colisiones."""
     archivos = request.files.getlist('archivo')
     if not archivos or all(a.filename == '' for a in archivos):
         return jsonify({'error': 'No se enviaron archivos válidos'}), 400
@@ -384,65 +507,108 @@ def analizar():
         if not archivo_permitido(archivo.filename):
             return jsonify({'error': f'Archivo no permitido: {archivo.filename}. Solo .txt, .pdf o .epub'}), 400
     
-    group_id = str(uuid.uuid4())[:8] # Un ID de grupo virtual (el frontend asume file_id)
+    group_id = str(uuid.uuid4())[:8]
     nombres_seguros = []
-    
+    capitulos_raw = []
     todos_capitulos = []
-    # Usaremos global_ids para no repetir id en frontend
-    global_id_counter = 0
+    errores_archivos = []
 
     try:
-        # Analizar todos y crear el grupo de capítulos
-        # Se usará group_id como file_id en el dict 'archivos_analizados'
         archivos_analizados[group_id] = {
-            'archivos': [], # [{'nombre': ..., 'ruta': ...}]
-            'texto': '', # texto concatenado si se re-analiza todo junto (o separado, ver luego)
-            'capitulos': [] # Lista real a guardar
+            'archivos': [],
+            'texto': '',
+            'capitulos': []
         }
         
         texto_total = ""
 
         for archivo in archivos:
-            nombre_seguro = secure_filename(archivo.filename)
+            nombre_seguro = obtener_nombre_seguro(archivo.filename)
             nombres_seguros.append(nombre_seguro)
+            tomo_stem = Path(archivo.filename).stem
             
             ruta_archivo = app.config['UPLOAD_FOLDER'] / f"{group_id}_{nombre_seguro}"
             archivo.save(str(ruta_archivo))
             
-            texto = leer_archivo(ruta_archivo)
+            try:
+                texto = leer_archivo(ruta_archivo)
+            except Exception as read_err:
+                errores_archivos.append(f"{archivo.filename}: {read_err}")
+                continue
+
             texto_total += texto + "\n\n"
             
             capitulos_archivo = dividir_por_capitulos(texto)
             for c in capitulos_archivo:
                 if isinstance(c, dict):
-                    todos_capitulos.append({
-                        'id': global_id_counter,
-                        'original_id': c['id'], # para reanálisis si fuera necesario
-                        'titulo': c['titulo'],
+                    capitulos_raw.append({
+                        'tomo_stem': tomo_stem,
+                        'titulo_base': c['titulo'],
+                        'original_id': c['id'],
                         'chars': c['chars'],
+                        'palabras': c.get('palabras', 0),
+                        'tiempo_estimado_min': c.get('tiempo_estimado_min', 0.0),
                         'contenido': c['contenido'],
                         'archivo_nombre': nombre_seguro
                     })
                 else: 
-                     todos_capitulos.append({
-                        'id': global_id_counter,
+                    palabras_c = len(re.findall(r'\b\w+\b', c[1]))
+                    capitulos_raw.append({
+                        'tomo_stem': tomo_stem,
+                        'titulo_base': c[0],
                         'original_id': 0,
-                        'titulo': c[0],
                         'chars': len(c[1]),
+                        'palabras': palabras_c,
+                        'tiempo_estimado_min': round(palabras_c / 150, 1),
                         'contenido': c[1],
                         'archivo_nombre': nombre_seguro
                     })
-                global_id_counter += 1
             
             archivos_analizados[group_id]['archivos'].append({
                 'nombre': nombre_seguro,
                 'ruta': str(ruta_archivo)
             })
 
+        if not capitulos_raw and errores_archivos:
+            return jsonify({'error': f"Error al leer archivos: {'; '.join(errores_archivos)}"}), 500
+
+        # Detectar si hay colisión de títulos entre tomos (ej. ambos tomos contienen 'Capítulo 1')
+        titulos_vistos = set()
+        hay_duplicados = False
+        for c in capitulos_raw:
+            if c['titulo_base'] in titulos_vistos:
+                hay_duplicados = True
+                break
+            titulos_vistos.add(c['titulo_base'])
+
+        # Asignar título e ID global
+        for i, c in enumerate(capitulos_raw):
+            # Si los tomos son secuenciales (Tomo 1: Cap 1-50, Tomo 2: Cap 51-100), mantiene 'Capítulo 51'.
+            # Si hay duplicados (Tomo 1: Cap 1, Tomo 2: Cap 1), prefija el tomo: 'Tomo 1 - Capítulo 1'.
+            if hay_duplicados and len(nombres_seguros) > 1:
+                titulo_final = f"{c['tomo_stem']} - {c['titulo_base']}"
+            else:
+                titulo_final = c['titulo_base']
+
+            todos_capitulos.append({
+                'id': i,
+                'original_id': c['original_id'],
+                'titulo': titulo_final,
+                'chars': c['chars'],
+                'palabras': c['palabras'],
+                'tiempo_estimado_min': c['tiempo_estimado_min'],
+                'contenido': c['contenido'],
+                'archivo_nombre': c['archivo_nombre']
+            })
+
         archivos_analizados[group_id]['texto'] = texto_total
         archivos_analizados[group_id]['capitulos'] = todos_capitulos
         
-        nombre_display = nombres_seguros[0] if len(nombres_seguros) == 1 else f"{len(nombres_seguros)} archivos seleccionados"
+        if len(nombres_seguros) == 1:
+            nombre_display = nombres_seguros[0]
+        else:
+            nombre_display = f"Audiolibro Multi-Tomo ({len(nombres_seguros)} tomos, {len(todos_capitulos)} capítulos)"
+
         return _respuesta_capitulos(group_id, nombre_display, todos_capitulos)
         
     except Exception as e:
@@ -451,7 +617,7 @@ def analizar():
 
 @app.route('/re-analizar', methods=['POST'])
 def re_analizar():
-    """Re-analiza un archivo ya subido con un separador personalizado."""
+    """Re-analiza archivos ya subidos con un separador personalizado."""
     data = request.get_json()
     file_id = data.get('file_id')
     separador = data.get('separador', '')
@@ -460,20 +626,90 @@ def re_analizar():
         return jsonify({'error': 'Archivo no encontrado. Vuelve a subirlo.'}), 400
     
     info = archivos_analizados[file_id]
-    texto = info.get('texto')
-    
-    if not texto:
-        # Re-leer el archivo si no está en cache
-        try:
-            texto = leer_archivo(info['ruta'])
-            info['texto'] = texto
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
-    
-    capitulos = dividir_por_capitulos(texto, separador_custom=separador if separador else None)
-    info['capitulos'] = capitulos
-    
-    return _respuesta_capitulos(file_id, info['nombre'], capitulos)
+    archivos_info = info.get('archivos', [])
+    capitulos_raw = []
+    todos_capitulos = []
+    texto_total = ""
+
+    if archivos_info:
+        for a_item in archivos_info:
+            ruta_str = a_item.get('ruta')
+            nombre_seguro = a_item.get('nombre', 'Libro')
+            tomo_stem = Path(nombre_seguro).stem
+            try:
+                texto = leer_archivo(ruta_str)
+                texto_total += texto + "\n\n"
+                capitulos_archivo = dividir_por_capitulos(texto, separador_custom=separador if separador else None)
+                
+                for c in capitulos_archivo:
+                    if isinstance(c, dict):
+                        capitulos_raw.append({
+                            'tomo_stem': tomo_stem,
+                            'titulo_base': c['titulo'],
+                            'original_id': c['id'],
+                            'chars': c['chars'],
+                            'palabras': c.get('palabras', 0),
+                            'tiempo_estimado_min': c.get('tiempo_estimado_min', 0.0),
+                            'contenido': c['contenido'],
+                            'archivo_nombre': nombre_seguro
+                        })
+                    else:
+                        palabras_c = len(re.findall(r'\b\w+\b', c[1]))
+                        capitulos_raw.append({
+                            'tomo_stem': tomo_stem,
+                            'titulo_base': c[0],
+                            'original_id': 0,
+                            'chars': len(c[1]),
+                            'palabras': palabras_c,
+                            'tiempo_estimado_min': round(palabras_c / 150, 1),
+                            'contenido': c[1],
+                            'archivo_nombre': nombre_seguro
+                        })
+            except Exception:
+                pass
+
+        titulos_vistos = set()
+        hay_duplicados = False
+        for c in capitulos_raw:
+            if c['titulo_base'] in titulos_vistos:
+                hay_duplicados = True
+                break
+            titulos_vistos.add(c['titulo_base'])
+
+        for i, c in enumerate(capitulos_raw):
+            if hay_duplicados and len(archivos_info) > 1:
+                titulo_final = f"{c['tomo_stem']} - {c['titulo_base']}"
+            else:
+                titulo_final = c['titulo_base']
+
+            todos_capitulos.append({
+                'id': i,
+                'original_id': c['original_id'],
+                'titulo': titulo_final,
+                'chars': c['chars'],
+                'palabras': c['palabras'],
+                'tiempo_estimado_min': c['tiempo_estimado_min'],
+                'contenido': c['contenido'],
+                'archivo_nombre': c['archivo_nombre']
+            })
+
+        info['texto'] = texto_total
+        info['capitulos'] = todos_capitulos
+    else:
+        texto = info.get('texto')
+        if not texto and info.get('ruta'):
+            try:
+                texto = leer_archivo(info['ruta'])
+                info['texto'] = texto
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
+        
+        capitulos = dividir_por_capitulos(texto, separador_custom=separador if separador else None)
+        info['capitulos'] = capitulos
+        todos_capitulos = capitulos
+
+    nombre_display = info.get('nombre', 'Audiolibro')
+    return _respuesta_capitulos(file_id, nombre_display, todos_capitulos)
 
 
 def _respuesta_capitulos(file_id, nombre, capitulos):
@@ -481,17 +717,24 @@ def _respuesta_capitulos(file_id, nombre, capitulos):
     caps_info = []
     for cap in capitulos:
         if isinstance(cap, dict):
+            palabras = cap.get('palabras', len(re.findall(r'\b\w+\b', cap.get('contenido', ''))))
+            tiempo_estimado = cap.get('tiempo_estimado_min', round(palabras / 150, 1))
             caps_info.append({
                 'id': cap['id'],
                 'titulo': cap['titulo'],
                 'chars': cap['chars'],
+                'palabras': palabras,
+                'tiempo_estimado_min': tiempo_estimado,
                 'archivo_nombre': cap.get('archivo_nombre', nombre)
             })
         else:
+            palabras_c = len(re.findall(r'\b\w+\b', cap[1]))
             caps_info.append({
                 'id': 0,
                 'titulo': cap[0],
                 'chars': len(cap[1]),
+                'palabras': palabras_c,
+                'tiempo_estimado_min': round(palabras_c / 150, 1),
                 'archivo_nombre': nombre
             })
     
@@ -500,6 +743,63 @@ def _respuesta_capitulos(file_id, nombre, capitulos):
         'nombre': nombre,
         'capitulos': caps_info,
         'total': len(caps_info)
+    })
+
+
+@app.route('/verificar-capitulos', methods=['POST'])
+def verificar_capitulos():
+    """Verifica qué capítulos ya tienen MP3 generados en la carpeta de salida."""
+    data = request.get_json()
+    file_id = data.get('file_id')
+
+    if not file_id or file_id not in archivos_analizados:
+        return jsonify({'error': 'Archivo no encontrado'}), 400
+
+    archivo_info = archivos_analizados[file_id]
+    todos_caps = archivo_info['capitulos']
+
+    # Determinar nombre base (misma lógica que /convertir)
+    if todos_caps and isinstance(todos_caps[0], dict) and 'archivo_nombre' in todos_caps[0]:
+        nombre_original = todos_caps[0]['archivo_nombre']
+    elif archivo_info.get('archivos'):
+        nombre_original = archivo_info['archivos'][0]['nombre']
+    else:
+        nombre_original = "Audiolibro"
+
+    nombre_base = Path(nombre_original).stem
+    carpeta_salida = app.config['OUTPUT_FOLDER'] / nombre_base
+
+    ya_completados = []
+
+    for cap in todos_caps:
+        if not isinstance(cap, dict):
+            continue
+
+        # Replicar la lógica exacta de _convertir_capitulo para construir la ruta
+        nombre_archivo_cap = cap.get('archivo_nombre', nombre_base)
+        nombre_libro = Path(nombre_archivo_cap).stem
+        nombre_libro_limpio = re.sub(r'[^\w\s\-\.]', '_', nombre_libro).strip()
+
+        carpeta_destino = carpeta_salida / nombre_libro_limpio
+
+        titulo_limpio = cap['titulo'].lower().replace(' ', '_')
+        titulo_limpio = re.sub(r'[^\w\s\-\.]', '_', titulo_limpio)
+        archivo_esperado = carpeta_destino / f"{nombre_libro_limpio}_{titulo_limpio}.mp3"
+
+        if archivo_esperado.exists() and archivo_esperado.stat().st_size > 0:
+            ya_completados.append({
+                'id': cap['id'],
+                'titulo': cap['titulo'],
+                'archivo': str(archivo_esperado.name),
+                'size': archivo_esperado.stat().st_size
+            })
+
+    return jsonify({
+        'file_id': file_id,
+        'ya_completados': ya_completados,
+        'total_existentes': len(ya_completados),
+        'total_capitulos': len(todos_caps),
+        'carpeta': str(carpeta_salida)
     })
 
 

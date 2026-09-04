@@ -419,6 +419,47 @@
             font-size: 0.95rem;
         }
 
+        .chapter-item.completed {
+            opacity: 0.5;
+            position: relative;
+        }
+
+        .chapter-item.completed .chapter-title::after {
+            content: ' ✅';
+        }
+
+        .chapter-done-badge {
+            font-size: 0.7rem;
+            color: var(--success);
+            font-weight: 500;
+        }
+
+        .verification-banner {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid rgba(74, 222, 128, 0.3);
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.9rem;
+            color: var(--success);
+            animation: fadeIn 0.3s ease;
+        }
+
+        .verification-banner .icon {
+            font-size: 1.3rem;
+        }
+
+        .verification-banner .info {
+            flex: 1;
+        }
+
+        .verification-banner .count {
+            font-weight: 600;
+        }
+
         .chapter-chars {
             font-size: 0.75rem;
             color: var(--text-secondary);
@@ -474,12 +515,42 @@
             color: var(--text-primary);
         }
 
-        /* Progress */
+        /* Progress & Rendering Animations */
         .progress-section {
             margin-top: 25px;
             background: var(--bg-card);
             border-radius: 15px;
-            padding: 20px;
+            padding: 24px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        }
+
+        .audio-wave {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            height: 36px;
+            margin-bottom: 20px;
+        }
+
+        .audio-wave span {
+            width: 5px;
+            height: 100%;
+            background: linear-gradient(180deg, var(--accent), var(--accent-secondary));
+            border-radius: 4px;
+            animation: wave 1.2s ease-in-out infinite;
+        }
+
+        .audio-wave span:nth-child(1) { animation-delay: 0.0s; }
+        .audio-wave span:nth-child(2) { animation-delay: 0.2s; }
+        .audio-wave span:nth-child(3) { animation-delay: 0.4s; }
+        .audio-wave span:nth-child(4) { animation-delay: 0.1s; }
+        .audio-wave span:nth-child(5) { animation-delay: 0.3s; }
+        .audio-wave span:nth-child(6) { animation-delay: 0.5s; }
+
+        @keyframes wave {
+            0%, 100% { height: 8px; opacity: 0.3; }
+            50% { height: 32px; opacity: 1; }
         }
 
         .progress-header {
@@ -489,27 +560,60 @@
         }
 
         .progress-status {
-            font-weight: 500;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         .progress-bar-container {
             background: var(--bg-secondary);
             border-radius: 10px;
-            height: 10px;
+            height: 12px;
             overflow: hidden;
+            border: 1px solid var(--border);
         }
 
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, var(--accent), var(--accent-secondary));
+            background: linear-gradient(90deg, var(--accent), var(--accent-secondary), #ff8e8e, var(--accent));
+            background-size: 200% 100%;
             border-radius: 10px;
-            transition: width 0.3s;
+            transition: width 0.4s ease;
+            animation: shimmerBar 2s linear infinite;
+        }
+
+        @keyframes shimmerBar {
+            0% { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
         }
 
         .progress-chapter {
-            margin-top: 10px;
             color: var(--text-secondary);
             font-size: 0.85rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 65%;
+        }
+
+        /* Analysis loader for step 1 */
+        .analysis-loader {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 15px;
+        }
+
+        .analysis-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
         }
 
         /* Results */
@@ -991,14 +1095,20 @@
             <!-- Step 3: Progress & Results -->
             <div class="section" id="progressSection">
                 <div class="progress-section">
+                    <div class="audio-wave">
+                        <span></span><span></span><span></span><span></span><span></span><span></span>
+                    </div>
                     <div class="progress-header">
-                        <span class="progress-status" id="progressStatus">Iniciando...</span>
+                        <span class="progress-status" id="progressStatus">🎙️ Iniciando conversión...</span>
                         <span class="progress-percent" id="progressPercent">0%</span>
                     </div>
                     <div class="progress-bar-container">
                         <div class="progress-bar" id="progressBar" style="width: 0%"></div>
                     </div>
-                    <div class="progress-chapter" id="progressChapter"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 12px;">
+                        <div class="progress-chapter" id="progressChapter">Analizando bloques de texto...</div>
+                        <div class="progress-eta" id="progressEta" style="font-size: 0.8rem; color: var(--accent-secondary); font-weight: 500;">⏱️ Calculando tiempo...</div>
+                    </div>
                 </div>
             </div>
 
@@ -1281,7 +1391,13 @@
                 return;
             }
 
-            dropZone.innerHTML = '<span class="drop-icon">⏳</span><p class="drop-text">Analizando...</p>';
+            dropZone.innerHTML = `
+                <div class="analysis-loader">
+                    <div class="analysis-spinner"></div>
+                    <p class="drop-text">📖 Analizando estructura del libro...</p>
+                    <p class="drop-hint">Extrayendo texto y descartando capítulos vacíos (&lt;30 palabras)</p>
+                </div>
+            `;
 
             const formData = new FormData();
             for (let file of validFiles) {
@@ -1304,6 +1420,9 @@
                 renderChapters();
                 showSection('select');
 
+                // Verificar capítulos ya convertidos
+                verificarCapitulosExistentes();
+
             } catch (err) {
                 alert('Error al procesar archivos');
                 resetDropZone();
@@ -1311,6 +1430,7 @@
         }
 
         function resetDropZone() {
+            completedChapterIds = new Set();
             dropZone.innerHTML = `
                 <span class="drop-icon">📚</span>
                 <p class="drop-text">Arrastra tu libro aquí</p>
@@ -1318,24 +1438,76 @@
             `;
         }
 
+        let completedChapterIds = new Set();
+
         function renderChapters() {
             const list = document.getElementById('chapterList');
-            list.innerHTML = chapters.map(c => `
-                <div class="chapter-item">
-                    <input type="checkbox" id="cap${c.id}" value="${c.id}" checked>
+            // Remove old verification banner
+            const oldBanner = document.getElementById('verificationBanner');
+            if (oldBanner) oldBanner.remove();
+
+            list.innerHTML = chapters.map(c => {
+                const isCompleted = completedChapterIds.has(c.id);
+                const palabras = c.palabras !== undefined ? c.palabras : Math.round(c.chars / 6);
+                const tiempoEstimado = c.tiempo_estimado_min !== undefined ? c.tiempo_estimado_min : (palabras / 150).toFixed(1);
+                return `
+                <div class="chapter-item${isCompleted ? ' completed' : ''}">
+                    <input type="checkbox" id="cap${c.id}" value="${c.id}" ${isCompleted ? '' : 'checked'}>
                     <div class="chapter-info">
                         <div class="chapter-title" style="font-weight: bold;">${c.titulo}</div>
                         <div class="chapter-chars" style="font-size: 0.8em; color: gray;">
-                            ${c.archivo_nombre} • ${(c.chars / 1000).toFixed(1)}k caracteres
+                            ${c.archivo_nombre} • ${palabras} palabras • ⏱️ ~${tiempoEstimado} min
+                            ${isCompleted ? '<span class="chapter-done-badge">• Ya convertido</span>' : ''}
                         </div>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
 
             list.querySelectorAll('input').forEach(cb => {
                 cb.addEventListener('change', updateSelectedCount);
             });
             updateSelectedCount();
+        }
+
+        async function verificarCapitulosExistentes() {
+            try {
+                const res = await fetch(getUrl('/verificar-capitulos'), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_id: currentFileId })
+                });
+                const data = await res.json();
+
+                if (data.error || !data.ya_completados || data.ya_completados.length === 0) {
+                    completedChapterIds = new Set();
+                    return;
+                }
+
+                // Guardar IDs completados y re-renderizar
+                completedChapterIds = new Set(data.ya_completados.map(c => c.id));
+                renderChapters();
+
+                // Mostrar banner informativo
+                const chapterSection = document.querySelector('.chapter-section');
+                const oldBanner = document.getElementById('verificationBanner');
+                if (oldBanner) oldBanner.remove();
+
+                const banner = document.createElement('div');
+                banner.id = 'verificationBanner';
+                banner.className = 'verification-banner';
+                const pendientes = data.total_capitulos - data.total_existentes;
+                banner.innerHTML = `
+                    <span class="icon">📋</span>
+                    <div class="info">
+                        <span class="count">${data.total_existentes}/${data.total_capitulos}</span> capítulos ya convertidos.
+                        <strong>${pendientes}</strong> pendientes seleccionados.
+                    </div>
+                `;
+                chapterSection.insertBefore(banner, chapterSection.firstChild);
+
+            } catch (err) {
+                console.log('No se pudo verificar capítulos existentes:', err);
+            }
         }
 
         function updateSelectedCount() {
@@ -1371,7 +1543,9 @@
                 }
 
                 chapters = data.capitulos;
+                completedChapterIds = new Set();
                 renderChapters();
+                verificarCapitulosExistentes();
                 hint.textContent = separador
                     ? `✅ Dividido con "${separador}" → ${data.total} partes`
                     : `✅ División automática → ${data.total} capítulos`;
@@ -1445,6 +1619,7 @@
         });
 
         async function pollProgress(jobId) {
+            const startTime = Date.now();
             const interval = setInterval(async () => {
                 try {
                     const res = await fetch(getUrl(`/estado/${jobId}`));
@@ -1454,7 +1629,7 @@
                     if (data.estado === 'pausando') {
                         statusText = `⏸️ Pausa preventiva (${data.pausa_restante}s)`;
                     } else if (data.estado === 'convirtiendo') {
-                        statusText = '🎙️ Convirtiendo...';
+                        statusText = '🎙️ Sintetizando audio...';
                     }
                     document.getElementById('progressStatus').textContent = statusText;
 
@@ -1463,7 +1638,25 @@
                         document.getElementById('progressPercent').textContent = pct + '%';
                         document.getElementById('progressBar').style.width = pct + '%';
                         document.getElementById('progressChapter').textContent =
-                            `${data.actual}/${data.total}: ${data.capitulo}`;
+                            `📌 [${data.actual}/${data.total}] ${data.capitulo}`;
+
+                        // Calcular tiempo restante estimado (ETA)
+                        if (data.actual > 0) {
+                            const elapsedSec = (Date.now() - startTime) / 1000;
+                            const secPerItem = elapsedSec / data.actual;
+                            const remainingItems = data.total - data.actual;
+                            const estSecRemaining = Math.ceil(remainingItems * secPerItem);
+                            if (estSecRemaining > 0) {
+                                const mins = Math.floor(estSecRemaining / 60);
+                                const secs = estSecRemaining % 60;
+                                const etaStr = mins > 0 ? `~${mins}m ${secs}s` : `~${secs}s`;
+                                document.getElementById('progressEta').textContent = `⏱️ Restante: ${etaStr}`;
+                            } else {
+                                document.getElementById('progressEta').textContent = '⏱️ Finalizando...';
+                            }
+                        } else {
+                            document.getElementById('progressEta').textContent = '⏱️ Preparando...';
+                        }
                     }
 
                     if (data.completados && data.completados.length > 0) {
@@ -1479,6 +1672,7 @@
 
                     if (data.estado === 'completado') {
                         clearInterval(interval);
+                        document.getElementById('progressEta').textContent = '✅ Completado';
                         showResults(jobId);
                     } else if (data.estado === 'error') {
                         clearInterval(interval);
