@@ -1,0 +1,17 @@
+{
+  "appId": "com.voco2.reader",
+  "appName": "Voco 2",
+  "webDir": "www",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  },
+  "server": {
+    "hostname": "www.bing.com",
+    "androidScheme": "https",
+    "allowNavigation": [
+      "*"
+    ]
+  }
+}

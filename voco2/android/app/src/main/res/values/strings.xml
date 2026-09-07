@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Voco 2</string>
+    <string name="title_activity_main">Voco 2</string>
+    <string name="package_name">com.voco2.reader</string>
+    <string name="custom_url_scheme">com.voco2.reader</string>
+</resources>

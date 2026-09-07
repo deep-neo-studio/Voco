@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="amoled">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Voco 2 - Lector & Audiolibro Sincronizado</title>
+    <link rel="stylesheet" href="static/css/style.css">
+</head>
+<body>
+
+    <!-- PANTALLA 1: BIBLIOTECA -->
+    <section class="screen active" id="libraryScreen">
+        <header class="library-header">
+            <div class="header-top-row">
+                <div class="brand">
+                    <span class="brand-icon">🎧</span>
+                    <h1 class="brand-title">Voco</h1>
+                    <span class="brand-badge">2.0</span>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-primary" id="btnImport" title="Importar libro">
+                        <span>＋</span> Importar
+                    </button>
+                    <button class="btn-icon" id="btnOpenSettings" title="Configuración">⚙️</button>
+                    <input type="file" id="fileInput" accept=".epub,.pdf,.txt" multiple style="display: none;" />
+                </div>
+            </div>
+
+            <!-- Buscador en tiempo real -->
+            <div class="search-box">
+                <span class="search-icon">🔍</span>
+                <input type="text" id="searchBooksInput" class="search-input" placeholder="Buscar por título o autor..." />
+            </div>
+
+            <!-- Estanterías -->
+            <nav class="shelves-bar">
+                <button class="shelf-tab active" data-shelf="all">Todos</button>
+                <button class="shelf-tab" data-shelf="reading">Leyendo</button>
+                <button class="shelf-tab" data-shelf="audio-ready">Con Audiolibro</button>
+                <button class="shelf-tab" data-shelf="finished">Terminados</button>
+            </nav>
+        </header>
+
+        <main class="library-body">
+            <div class="storage-status-bar" id="storageIndicator">
+                <span>Cargando biblioteca...</span>
+            </div>
+            <div class="books-grid" id="booksGrid">
+                <!-- Se inyectan las tarjetas de libros dinámicamente -->
+            </div>
+        </main>
+    </section>
+
+    <!-- PANTALLA 2: LECTOR E-READER -->
+    <section class="screen reader-screen" id="readerScreen">
+        <header class="reader-header">
+            <div class="reader-header-left">
+                <button class="btn-icon" id="btnBackToLibrary" title="Volver a la Biblioteca">←</button>
+                <div class="reader-book-info">
+                    <div class="reader-title" id="readerTitle">Título del Libro</div>
+                    <div class="reader-chapter-name" id="readerChapterName">Capítulo 1</div>
+                </div>
+            </div>
+
+            <div class="reader-header-right">
+                <button class="btn-convert-prompt" id="btnReaderAudio">
+                    <span>⚡</span> Convertir
+                </button>
+                <button class="btn-icon" id="btnOpenToc" title="Índice de Capítulos">📑</button>
+                <button class="btn-icon" id="btnReaderSettings" title="Ajustes de Lectura">Aa</button>
+            </div>
+        </header>
+
+        <main class="reader-content-wrap" id="readerBody">
+            <!-- Párrafos renderizados con atributos data-p-id para sincronización Whispersync -->
+        </main>
+
+        <footer class="reader-footer">
+            <button class="reader-nav-btn" id="btnPrevChapter">‹ Anterior</button>
+            <span class="reader-progress-info" id="readerProgressText">Cap. 1 de 1</span>
+            <button class="reader-nav-btn" id="btnNextChapter">Siguiente ›</button>
+        </footer>
+    </section>
+
+    <!-- REPRODUCTOR MINI FLOTANTE -->
+    <div class="mini-player" id="miniPlayer">
+        <div class="mini-player-progress">
+            <div class="mini-player-progress-fill" id="miniProgressBar"></div>
+        </div>
+        <div class="mini-player-content" id="miniExpand">
+            <img src="" id="miniCover" class="mini-cover" alt="Cover" />
+            <div class="mini-info">
+                <div class="mini-book-title" id="miniBookTitle">Título</div>
+                <div class="mini-chapter-title" id="miniChapterTitle">Capítulo</div>
+            </div>
+            <div class="mini-controls">
+                <button class="btn-mini-ctrl" id="miniForward" title="Adelantar 15s">↷15</button>
+                <button class="btn-mini-ctrl btn-mini-play" id="miniPlayPause" title="Reproducir / Pausa">▶</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- REPRODUCTOR EXPANDIDO (FULL SCREEN AUDIOBOOK) -->
+    <div class="expanded-player" id="expandedPlayerModal">
+        <div class="exp-header">
+            <button class="btn-icon" id="btnCloseExpandedPlayer" title="Cerrar">✕</button>
+            <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">REPRODUCIENDO</span>
+            <button class="btn-icon" id="btnExpSleep" title="Temporizador de Sueño">🌙</button>
+        </div>
+
+        <div class="exp-artwork-wrap">
+            <img src="" id="expCover" class="exp-cover" alt="Portada" />
+        </div>
+
+        <div class="exp-info">
+            <h3 class="exp-title" id="expBookTitle">Título del Libro</h3>
+            <h4 class="exp-chap" id="expChapterTitle">Capítulo 1</h4>
+            <p class="exp-author" id="expAuthor">Autor</p>
+        </div>
+
+        <div class="exp-progress-wrap">
+            <div class="exp-progress-bar" id="expProgressBarWrap">
+                <div class="exp-progress-fill" id="expProgressFill"></div>
+            </div>
+            <div class="exp-time-row">
+                <span id="expTimeCurrent">0:00</span>
+                <span id="expTimeTotal">0:00</span>
+            </div>
+        </div>
+
+        <div class="exp-controls-row">
+            <button class="btn-exp-ctrl" id="expRewind" title="Retroceder 15s">↶ 15</button>
+            <button class="btn-exp-ctrl btn-exp-main-play" id="expPlayPause" title="Play/Pause">▶</button>
+            <button class="btn-exp-ctrl" id="expForward" title="Adelantar 15s">↷ 15</button>
+        </div>
+
+        <div class="exp-secondary-row">
+            <button class="btn-pill" id="btnExpSpeed">1.0x</button>
+            <button class="btn-pill" id="btnExpGoToReader">📖 Ir al Lector Sincronizado</button>
+        </div>
+    </div>
+
+    <!-- MODAL: ESTUDIO DE CONVERSIÓN DE AUDIO -->
+    <div class="modal-overlay" id="audioStudioModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title">🎙️ Estudio de Audiolibro</h3>
+                <button class="btn-icon" id="btnCloseStudio">✕</button>
+            </div>
+            <div class="modal-body">
+                <h4 id="studioBookTitle" style="margin-bottom: 12px; font-size: 14px; color: var(--accent);">Libro</h4>
+                
+                <div class="form-group">
+                    <label class="form-label">Voz Neuronal</label>
+                    <select id="voiceSelect" class="form-select">
+                        <option value="es-MX-JorgeNeural">🇲🇽 Jorge (México - Neuronal)</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <label class="form-label" style="margin: 0;">Seleccionar Capítulos</label>
+                        <button type="button" class="btn-pill" id="btnSelectAllChapters" style="font-size: 11px; padding: 4px 10px;">Alternar Todos</button>
+                    </div>
+                    <div class="studio-chapter-list" id="studioChapterList">
+                        <!-- Checkboxes generados dinámicamente -->
+                    </div>
+                </div>
+
+                <div id="studioProgressBox" style="display: none; margin-bottom: 16px;">
+                    <div class="progress-bar-wrap" style="height: 8px;">
+                        <div class="progress-bar-fill" id="studioProgressBar" style="width: 0%;"></div>
+                    </div>
+                    <p id="studioProgressText" style="font-size: 12px; color: var(--text-muted); margin-top: 6px; text-align: center;">Iniciando...</p>
+                </div>
+
+                <button class="btn-primary" id="btnStartConversion" style="width: 100%; justify-content: center; padding: 12px;">
+                    ⚡ Iniciar Conversión y Sincronización
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: AJUSTES DE LECTURA Y APP -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3 class="modal-title">⚙️ Ajustes de Lectura</h3>
+                <button class="btn-icon" id="btnCloseSettings">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">Tema Visual</label>
+                    <select id="themeSelect" class="form-select">
+                        <option value="amoled">🖤 AMOLED Black (OLED)</option>
+                        <option value="dark">🌑 Noche Slate</option>
+                        <option value="sepia">📜 Sepia Cálido</option>
+                        <option value="light">☀️ Blanco Papel</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Tipografía</label>
+                    <select id="fontFamilySelect" class="form-select">
+                        <option value="'Inter', sans-serif">Moderna (Inter)</option>
+                        <option value="'Literata', serif">Literaria (Literata)</option>
+                        <option value="'JetBrains Mono', monospace">Monoespaciada</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Tamaño de Letra</label>
+                    <input type="range" id="fontSizeRange" min="14" max="28" value="18" class="form-range" />
+                </div>
+
+                <div style="margin-top: 24px; border-top: 1px solid var(--border-color); padding-top: 16px;">
+                    <label class="form-label">Gestión de Almacenamiento</label>
+                    <button class="btn-pill" id="btnClearAllAudio" style="color: #f87171; border-color: rgba(248, 113, 113, 0.3); width: 100%;">
+                        🗑️ Borrar todos los audios generados (Liberar espacio)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DRAWER: ÍNDICE DE CAPÍTULOS (TOC) -->
+    <aside class="drawer" id="tocDrawer">
+        <div class="drawer-header">
+            <h3 style="font-size: 15px; font-weight: 700;">📑 Capítulos</h3>
+            <button class="btn-icon" id="btnCloseToc">✕</button>
+        </div>
+        <ul class="drawer-list" id="tocList">
+            <!-- Capítulos generados -->
+        </ul>
+    </aside>
+
+    <!-- Dependencias Vendor locales -->
+    <script src="static/js/jszip.min.js"></script>
+
+    <!-- Bundle de la aplicación -->
+    <script type="module" src="static/js/app.bundle.js"></script>
+</body>
+</html>
